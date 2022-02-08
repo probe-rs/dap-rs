@@ -106,8 +106,8 @@ pub trait Swd {
     fn configure(&mut self, period: TurnaroundPeriod, data_phase: DataPhase) -> bool;
 
     /// Helper method over `read_inner` to retry during `AckWait`.
-    fn read(&mut self, num_retries: usize, apndp: APnDP, a: DPRegister) -> Result<u32> {
-        for _ in 0..num_retries {
+    fn read(&mut self, wait_retries: usize, apndp: APnDP, a: DPRegister) -> Result<u32> {
+        for _ in 0..wait_retries {
             match self.read_inner(apndp, a) {
                 Err(Error::AckWait) => continue,
                 x => return x,
@@ -121,8 +121,8 @@ pub trait Swd {
     fn read_inner(&mut self, apndp: APnDP, a: DPRegister) -> Result<u32>;
 
     /// Helper method over `write_inner` to retry during `AckWait`.
-    fn write(&mut self, num_retries: usize, apndp: APnDP, a: DPRegister, data: u32) -> Result<()> {
-        for _ in 0..num_retries {
+    fn write(&mut self, wait_retries: usize, apndp: APnDP, a: DPRegister, data: u32) -> Result<()> {
+        for _ in 0..wait_retries {
             match self.write_inner(apndp, a, data) {
                 Err(Error::AckWait) => continue,
                 x => return x,

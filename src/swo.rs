@@ -3,7 +3,7 @@ use num_enum::TryFromPrimitive;
 #[derive(Copy, Clone, Debug, TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
-enum SWOTransport {
+pub enum SwoTransport {
     None = 0,
     DAPCommand = 1,
     USBEndpoint = 2,
@@ -12,7 +12,7 @@ enum SWOTransport {
 #[derive(Copy, Clone, Debug, TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
-enum SWOMode {
+pub enum SwoMode {
     Off = 0,
     UART = 1,
     Manchester = 2,
@@ -21,17 +21,37 @@ enum SWOMode {
 #[derive(Copy, Clone, Debug, TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
-enum SWOControl {
+pub enum SwoControl {
     Stop = 0,
     Start = 1,
 }
 
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SwoSupport {
+    pub uart: bool,
+    pub manchester: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SwoStatus {
+    pub active: bool,
+    pub trace_error: bool,
+    pub trace_overrun: bool,
+    pub bytes_available: u32,
+}
+
 pub trait Swo {
-    fn configure(&mut self);
-    fn set_transport(&mut self);
-    fn set_mode(&mut self);
-    fn set_baudrate(&mut self);
-    fn control(&mut self);
-    fn polling_data(&mut self);
-    fn streaming_data(&mut self);
+    fn set_transport(&mut self, transport: SwoTransport);
+    fn set_mode(&mut self, mode: SwoMode);
+    fn set_baudrate(&mut self, baudrate: u32) -> u32;
+    fn control(&mut self, control: SwoControl);
+    fn polling_data(&mut self, buf: &mut [u8]) -> u32;
+    fn streaming_data(&mut self); //  -> SomeBufferFromStreaming; // TODO: What is a good interface?
+    fn is_active(&mut self) -> bool;
+    fn bytes_available(&mut self) -> u32;
+    fn buffer_size(&mut self) -> u32;
+    fn support(&mut self) -> SwoSupport;
+    fn status(&mut self) -> SwoStatus;
 }
