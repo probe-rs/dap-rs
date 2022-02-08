@@ -1,7 +1,8 @@
-use num_enum::IntoPrimitive;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// The available errors for SWD.
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Parity error.
     BadParity,
@@ -21,6 +22,8 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// Available DP registers.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, IntoPrimitive)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(missing_docs)]
 pub enum DPRegister {
     DPIDR = 0,
     CTRLSTAT = 1,
@@ -31,6 +34,7 @@ pub enum DPRegister {
 /// Encode if a transaction is for AP or DP.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum APnDP {
     /// For DP.
     DP = 0,
@@ -41,6 +45,7 @@ pub enum APnDP {
 /// Encode if an SWD transaction is a read or a write.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RnW {
     /// Write flag.
     W = 0,
@@ -51,14 +56,12 @@ pub enum RnW {
 /// The different kinds of SWD Ack.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(missing_docs)]
 pub enum Ack {
-    /// An ok Ack.
     Ok = 0b001,
-    /// Not yet ready.
     Wait = 0b010,
-    /// A fault has occurred.
     Fault = 0b100,
-    /// Protocol error.
     Protocol = 0b111,
 }
 
@@ -75,8 +78,33 @@ impl Ack {
     }
 }
 
+/// Turn around period configuration.
+#[derive(Copy, Clone, Debug, TryFromPrimitive)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(missing_docs)]
+#[repr(u8)]
+pub enum TurnaroundPeriod {
+    Cycles1 = 0b00,
+    Cycles2 = 0b01,
+    Cycles3 = 0b10,
+    Cycles4 = 0b11,
+}
+
+/// Data phase configuration.
+#[derive(Copy, Clone, Debug, TryFromPrimitive)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(missing_docs)]
+#[repr(u8)]
+pub enum DataPhase {
+    NoDataPhase = 0,
+    AlwaysDataPhase = 1,
+}
+
 /// Definition of SWD communication.
 pub trait Swd {
+    /// Configure SWD, return true if the configuration was successful.
+    fn configure(&mut self, period: TurnaroundPeriod, data_phase: DataPhase) -> bool;
+
     /// Helper method over `read_inner` to retry during `AckWait`.
     fn read(&mut self, num_retries: usize, apndp: APnDP, a: DPRegister) -> Result<u32> {
         for _ in 0..num_retries {
@@ -109,6 +137,12 @@ pub trait Swd {
 
     /// Here is the actual hardware implementation to idle low.
     fn idle_low(&mut self);
+
+    /// Set the maximum clock frequency for the SWD, return `true` if it is valid.
+    fn set_clock(&mut self, max_frequency: u32) -> bool;
+
+    /// A sequence of bits to send. Used by `SWJ_Sequence`.
+    fn tx_sequence(data: &[u8], nbits: usize);
 }
 
 /// Helper used by `Swd::read_inner` and `Swd::write_inner` to make the request byte.
