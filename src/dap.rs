@@ -39,6 +39,7 @@ pub trait DapContext {
     fn high_impedance_mode(&mut self);
 }
 
+/// LED control trait.
 pub trait DapLeds {
     /// React to host status, usually setting some LEDs
     fn react_to_host_status(&mut self, host_status: HostStatus);
@@ -75,7 +76,8 @@ impl<
         SWO: swo::Swo,
     > Dap<'a, CONTEXT, LEDS, WAIT, JTAG, SWD, SWO>
 {
-    pub fn new(
+    /// Create a Dap handler from parts.
+    pub fn from_parts(
         context: CONTEXT,
         leds: LEDS,
         wait: WAIT,
@@ -258,10 +260,6 @@ impl<
                     DapState::Jtag(context) => DapState::Swd(SWD::new(context.release())),
                     v => v,
                 });
-                //     self.pins.swd_mode();
-                //     self.swd.spi_enable();
-                //     self.mode = Some(DAPMode::SWD);
-                //     resp.write_u8(ConnectPortResponse::SWD as u8);
             }
 
             // JTAG
@@ -273,10 +271,6 @@ impl<
                     DapState::Swd(swd) => DapState::Jtag(JTAG::new(swd.release())),
                     v => v,
                 });
-                //     self.pins.jtag_mode();
-                //     self.jtag.spi_enable();
-                //     self.mode = Some(DAPMode::JTAG);
-                //     resp.write_u8(ConnectPortResponse::JTAG as u8);
             }
 
             // Error (tried to connect JTAG or SWD when not available)
@@ -291,15 +285,20 @@ impl<
 
     fn process_disconnect(&mut self, _req: Request, resp: &mut ResponseWriter) {
         self.state.replace_with(|state| match state {
-            DapState::Swd(swd) => DapState::None(swd.release()),
-            DapState::Jtag(jtag) => DapState::None(jtag.release()),
+            DapState::Swd(swd) => {
+                let mut ctx = swd.release();
+                ctx.high_impedance_mode();
+                DapState::None(ctx)
+            }
+            DapState::Jtag(jtag) => {
+                let mut ctx = jtag.release();
+                ctx.high_impedance_mode();
+                DapState::None(ctx)
+            }
             v => v,
         });
-        // self.pins.high_impedance_mode();
-        // self.mode = None;
-        // self.swd.spi_disable();
-        // self.jtag.spi_disable();
-        // resp.write_ok();
+
+        resp.write_ok();
     }
 
     fn process_write_abort(&mut self, mut req: Request, resp: &mut ResponseWriter) {
@@ -709,16 +708,16 @@ impl<
         let rnw = swd::RnW::try_from(transfer_req & (1 << 1)).unwrap();
         let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
 
-        // Skip three bytes in resp to reserve space for final status,
-        // which we update while processing.
-        resp.write_u16(0);
-        resp.write_u8(0);
-
         match &mut self.state {
             DapState::Jtag(jtag) => {
                 // TODO: Needs supporting.
             }
             DapState::Swd(swd) => {
+                // Skip three bytes in resp to reserve space for final status,
+                // which we update while processing.
+                resp.write_u16(0);
+                resp.write_u8(0);
+
                 // Keep track of how many transfers we executed,
                 // so if there is an error the host knows where
                 // it happened.
