@@ -187,7 +187,7 @@ impl<
                     }
                     None => 0,
                 };
-                let atomic = 1 << 4;
+                let atomic = 0 << 4;
                 let swo_streaming = 1 << 6;
                 resp.write_u8(swd | jtag | swo | atomic | swo_streaming);
             }
@@ -309,7 +309,7 @@ impl<
         let word = req.next_u32();
         match (SWD::AVAILABLE, JTAG::AVAILABLE, &mut self.state) {
             (_, true, DapState::Jtag(jtag)) => {
-                // TODO: Implement for JTAG
+                // TODO: Implement one day.
                 resp.write_err();
             }
             (true, _, DapState::Swd(swd)) => {
@@ -428,7 +428,7 @@ impl<
     }
 
     fn process_swd_sequence(&self, req: Request, resp: &mut ResponseWriter) {
-        todo!()
+        // TODO: Needs implementing
     }
 
     fn process_swo_transport(&mut self, mut req: Request, resp: &mut ResponseWriter) {
@@ -573,12 +573,12 @@ impl<
         };
     }
 
-    fn process_jtag_configure(&self, req: Request, resp: &mut ResponseWriter) {
-        todo!()
+    fn process_jtag_configure(&self, _req: Request, _resp: &mut ResponseWriter) {
+        // TODO: Implement one day (needs proper JTAG support)
     }
 
-    fn process_jtag_idcode(&self, req: Request, resp: &mut ResponseWriter) {
-        todo!()
+    fn process_jtag_idcode(&self, _req: Request, _resp: &mut ResponseWriter) {
+        // TODO: Implement one day (needs proper JTAG support)
     }
 
     fn process_transfer_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
@@ -602,7 +602,7 @@ impl<
 
         match &mut self.state {
             DapState::Jtag(jtag) => {
-                // TODO: Needs supporting.
+                // TODO: Implement one day.
             }
             DapState::Swd(swd) => {
                 // Skip two bytes in resp to reserve space for final status,
@@ -720,7 +720,7 @@ impl<
 
         match &mut self.state {
             DapState::Jtag(jtag) => {
-                // TODO: Needs supporting.
+                // TODO: Implement one day.
             }
             DapState::Swd(swd) => {
                 // Skip three bytes in resp to reserve space for final status,
@@ -801,12 +801,12 @@ impl<
         // new requests. Therefore there's nothing to do here.
     }
 
-    fn process_execute_commands(&self, req: Request, resp: &mut ResponseWriter) {
-        todo!()
+    fn process_execute_commands(&self, _req: Request, _resp: &mut ResponseWriter) {
+        // TODO: Implement one day.
     }
 
-    fn process_queue_commands(&self, req: Request, resp: &mut ResponseWriter) {
-        todo!()
+    fn process_queue_commands(&self, _req: Request, _resp: &mut ResponseWriter) {
+        // TODO: Implement one day.
     }
 }
 
