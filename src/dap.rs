@@ -25,9 +25,7 @@ impl<CONTEXT: DapContext + swj::Swj, JTAG: jtag::Jtag<CONTEXT>, SWD: swd::Swd<CO
     #[inline(always)]
     pub fn replace_with<F: FnOnce(Self) -> Self>(&mut self, f: F) {
         unsafe {
-            let old = core::ptr::read(self);
-            let new = f(old);
-            core::ptr::write(self, new);
+            replace_with::replace_with_or_abort_unchecked(self, f);
         }
     }
 }
