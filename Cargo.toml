@@ -2,6 +2,7 @@
 name = "debug-traits"
 version = "0.1.0"
 edition = "2021"
+authors = ["Emil Fresk <emil.fresk@gmail.com>", "Adam Greig <adam@adamgreig.com>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
