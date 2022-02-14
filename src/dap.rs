@@ -126,7 +126,7 @@ impl<
             Command::DAP_SWJ_Clock => self.process_swj_clock(req, resp),
             Command::DAP_SWJ_Sequence => self.process_swj_sequence(req, resp),
             Command::DAP_SWD_Configure => self.process_swd_configure(req, resp),
-            Command::DAP_SWD_Sequence => todo!(),
+            Command::DAP_SWD_Sequence => self.process_swd_sequence(req, resp),
             Command::DAP_SWO_Transport => self.process_swo_transport(req, resp),
             Command::DAP_SWO_Mode => self.process_swo_mode(req, resp),
             Command::DAP_SWO_Baudrate => self.process_swo_baudrate(req, resp),
@@ -134,8 +134,8 @@ impl<
             Command::DAP_SWO_Status => self.process_swo_status(req, resp),
             Command::DAP_SWO_ExtendedStatus => self.process_swo_extended_status(req, resp),
             Command::DAP_SWO_Data => self.process_swo_data(req, resp),
-            Command::DAP_JTAG_Configure => todo!(),
-            Command::DAP_JTAG_IDCODE => todo!(),
+            Command::DAP_JTAG_Configure => self.process_jtag_configure(req, resp),
+            Command::DAP_JTAG_IDCODE => self.process_jtag_idcode(req, resp),
             Command::DAP_JTAG_Sequence => self.process_jtag_sequence(req, resp),
             Command::DAP_TransferConfigure => self.process_transfer_configure(req, resp),
             Command::DAP_Transfer => self.process_transfer(req, resp),
@@ -145,8 +145,8 @@ impl<
                 // Do not send a response for transfer abort commands
                 return 0;
             }
-            Command::DAP_ExecuteCommands => todo!(),
-            Command::DAP_QueueCommands => todo!(),
+            Command::DAP_ExecuteCommands => self.process_execute_commands(req, resp),
+            Command::DAP_QueueCommands => self.process_queue_commands(req, resp),
             Command::Unimplemented => {}
         }
 
@@ -427,6 +427,10 @@ impl<
         }
     }
 
+    fn process_swd_sequence(&self, req: Request, resp: &mut ResponseWriter) {
+        todo!()
+    }
+
     fn process_swo_transport(&mut self, mut req: Request, resp: &mut ResponseWriter) {
         let transport = req.next_u8();
         match SwoTransport::try_from(transport) {
@@ -567,6 +571,14 @@ impl<
             }
             _ => resp.write_err(),
         };
+    }
+
+    fn process_jtag_configure(&self, req: Request, resp: &mut ResponseWriter) {
+        todo!()
+    }
+
+    fn process_jtag_idcode(&self, req: Request, resp: &mut ResponseWriter) {
+        todo!()
     }
 
     fn process_transfer_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
@@ -787,6 +799,14 @@ impl<
         // We'll only ever receive an abort request when we're not already
         // processing anything else, since processing blocks checking for
         // new requests. Therefore there's nothing to do here.
+    }
+
+    fn process_execute_commands(&self, req: Request, resp: &mut ResponseWriter) {
+        todo!()
+    }
+
+    fn process_queue_commands(&self, req: Request, resp: &mut ResponseWriter) {
+        todo!()
     }
 }
 
