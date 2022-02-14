@@ -46,12 +46,12 @@ pub trait Swo {
     fn set_transport(&mut self, transport: SwoTransport);
     fn set_mode(&mut self, mode: SwoMode);
     fn set_baudrate(&mut self, baudrate: u32) -> u32;
-    fn control(&mut self, control: SwoControl);
+    fn set_control(&mut self, control: SwoControl);
     fn polling_data(&mut self, buf: &mut [u8]) -> u32;
     fn streaming_data(&mut self); //  -> SomeBufferFromStreaming; // TODO: What is a good interface?
-    fn is_active(&mut self) -> bool;
-    fn bytes_available(&mut self) -> u32;
-    fn buffer_size(&mut self) -> u32;
-    fn support(&mut self) -> SwoSupport;
+    fn is_active(&self) -> bool;
+    fn bytes_available(&self) -> u32;
+    fn buffer_size(&self) -> u32;
+    fn support(&self) -> SwoSupport;
     fn status(&mut self) -> SwoStatus;
 }

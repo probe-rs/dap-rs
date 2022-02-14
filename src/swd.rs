@@ -1,3 +1,4 @@
+use crate::dap::DapContext;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// The available errors for SWD.
@@ -21,7 +22,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Available DP registers.
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, IntoPrimitive)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, IntoPrimitive, TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 pub enum DPRegister {
@@ -33,7 +34,7 @@ pub enum DPRegister {
 
 /// Encode if a transaction is for AP or DP.
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum APnDP {
     /// For DP.
@@ -44,7 +45,7 @@ pub enum APnDP {
 
 /// Encode if an SWD transaction is a read or a write.
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RnW {
     /// Write flag.
@@ -55,7 +56,7 @@ pub enum RnW {
 
 /// The different kinds of SWD Ack.
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 pub enum Ack {
@@ -101,7 +102,16 @@ pub enum DataPhase {
 }
 
 /// Definition of SWD communication.
-pub trait Swd {
+pub trait Swd<CONTEXT: DapContext> {
+    /// If SWD is available or not.
+    const AVAILABLE: bool;
+
+    /// Create the SWD from context
+    fn new(context: CONTEXT) -> Self;
+
+    /// Release the context from the SWD
+    fn release(self) -> CONTEXT;
+
     /// Configure SWD, return true if the configuration was successful.
     fn configure(&mut self, period: TurnaroundPeriod, data_phase: DataPhase) -> bool;
 
@@ -135,14 +145,26 @@ pub trait Swd {
     /// Here the actual hardware implementation for an SWD write is made.
     fn write_inner(&mut self, apndp: APnDP, a: DPRegister, data: u32) -> Result<()>;
 
+    /// Shorthand helper to read DP registers
+    fn read_dp(&mut self, wait_retries: usize, a: DPRegister) -> Result<u32> {
+        self.read(wait_retries, APnDP::DP, a)
+    }
+
+    /// Shorthand helper to write DP registers
+    fn write_dp(&mut self, wait_retries: usize, a: DPRegister, data: u32) -> Result<()> {
+        self.write(wait_retries, APnDP::DP, a, data)
+    }
+
+    /// Shorthand helper to read AP registers
+    fn read_ap(&mut self, wait_retries: usize, a: DPRegister) -> Result<u32> {
+        self.read(wait_retries, APnDP::AP, a)
+    }
+
     /// Here is the actual hardware implementation to idle low.
     fn idle_low(&mut self);
 
-    /// Set the maximum clock frequency for the SWD, return `true` if it is valid.
+    /// Set the maximum clock frequency, return `true` if it is valid.
     fn set_clock(&mut self, max_frequency: u32) -> bool;
-
-    /// A sequence of bits to send. Used by `SWJ_Sequence`.
-    fn tx_sequence(data: &[u8], nbits: usize);
 }
 
 /// Helper used by `Swd::read_inner` and `Swd::write_inner` to make the request byte.

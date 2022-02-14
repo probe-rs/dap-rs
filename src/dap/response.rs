@@ -1,8 +1,8 @@
 use super::{Command, ResponseStatus};
 
 pub struct ResponseWriter<'a> {
-    buf: &'a mut [u8],
-    idx: usize,
+    pub buf: &'a mut [u8],
+    pub idx: usize,
 }
 
 impl<'a> ResponseWriter<'a> {
@@ -34,11 +34,11 @@ impl<'a> ResponseWriter<'a> {
     }
 
     pub fn write_ok(&mut self) {
-        self.write_u8(ResponseStatus::DAP_OK.into());
+        self.write_u8(ResponseStatus::DapOk.into());
     }
 
     pub fn write_err(&mut self) {
-        self.write_u8(ResponseStatus::DAP_ERROR.into());
+        self.write_u8(ResponseStatus::DapError.into());
     }
 
     pub fn write_u8_at(&mut self, idx: usize, value: u8) {

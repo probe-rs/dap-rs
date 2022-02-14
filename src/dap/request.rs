@@ -1,8 +1,8 @@
 use super::Command;
 
 pub struct Request<'a> {
-    command: Command,
-    data: &'a [u8],
+    pub command: Command,
+    pub data: &'a [u8],
 }
 
 impl<'a> Request<'a> {
