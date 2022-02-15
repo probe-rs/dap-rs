@@ -13,7 +13,7 @@ pub struct CmsisDapV2<'a, B: UsbBus> {
 }
 
 impl<B: UsbBus> CmsisDapV2<'_, B> {
-    pub fn new(alloc: &UsbBusAllocator<B>) -> CmsisDapV2<B> {
+    pub fn new(max_packet_size: u16, alloc: &UsbBusAllocator<B>) -> CmsisDapV2<B> {
         CmsisDapV2 {
             interface: alloc.interface(),
             name: alloc.string(),
@@ -21,7 +21,7 @@ impl<B: UsbBus> CmsisDapV2<'_, B> {
                 .alloc(
                     Some(EndpointAddress::from(0x02)),
                     EndpointType::Bulk,
-                    DAP2_PACKET_SIZE,
+                    max_packet_size,
                     0xff,
                 )
                 .expect("alloc_ep failed 3"),
@@ -29,7 +29,7 @@ impl<B: UsbBus> CmsisDapV2<'_, B> {
                 .alloc(
                     Some(EndpointAddress::from(0x82)),
                     EndpointType::Bulk,
-                    DAP2_PACKET_SIZE,
+                    max_packet_size,
                     0xff,
                 )
                 .expect("alloc_ep failed 4"),
@@ -37,7 +37,7 @@ impl<B: UsbBus> CmsisDapV2<'_, B> {
                 .alloc(
                     Some(EndpointAddress::from(0x83)),
                     EndpointType::Bulk,
-                    DAP2_PACKET_SIZE,
+                    max_packet_size,
                     0xff,
                 )
                 .expect("alloc_ep failed 5"),

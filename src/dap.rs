@@ -337,9 +337,9 @@ impl<
     }
 
     fn process_swj_pins(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        let output = req.next_u8();
-        let mask = req.next_u8();
-        let wait_us = req.next_u32().max(3_000_000);
+        let output = swj::Pins::from_bits_truncate(req.next_u8());
+        let mask = swj::Pins::from_bits_truncate(req.next_u8());
+        let wait_us = req.next_u32().max(3_000_000); // Defined as max 3 seconds
 
         let mut return_state = 0;
 

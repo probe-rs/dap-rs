@@ -43,14 +43,14 @@ pub struct CmsisDapV1<'a, B: UsbBus> {
 }
 
 impl<B: UsbBus> CmsisDapV1<'_, B> {
-    pub fn new(alloc: &UsbBusAllocator<B>) -> CmsisDapV1<B> {
+    pub fn new(max_packet_size: u16, alloc: &UsbBusAllocator<B>) -> CmsisDapV1<B> {
         CmsisDapV1 {
             interface: alloc.interface(),
             read_ep: alloc
                 .alloc(
                     Some(EndpointAddress::from(0x01)),
                     EndpointType::Interrupt,
-                    DAP1_PACKET_SIZE,
+                    max_packet_size,
                     1,
                 )
                 .expect("alloc_ep failed 1"),
@@ -58,7 +58,7 @@ impl<B: UsbBus> CmsisDapV1<'_, B> {
                 .alloc(
                     Some(EndpointAddress::from(0x81)),
                     EndpointType::Interrupt,
-                    DAP1_PACKET_SIZE,
+                    max_packet_size,
                     1,
                 )
                 .expect("alloc_ep failed 2"),
