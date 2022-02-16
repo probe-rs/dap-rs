@@ -153,6 +153,23 @@ impl<
         resp.idx
     }
 
+    /// Suspend the interface.
+    pub fn suspend(&mut self) {
+        self.state.replace_with(|state| match state {
+            DapState::Swd(swd) => {
+                let mut ctx = swd.release();
+                ctx.high_impedance_mode();
+                DapState::None(ctx)
+            }
+            DapState::Jtag(jtag) => {
+                let mut ctx = jtag.release();
+                ctx.high_impedance_mode();
+                DapState::None(ctx)
+            }
+            v => v,
+        });
+    }
+
     fn process_info(&mut self, mut req: Request, resp: &mut ResponseWriter, version: DapVersion) {
         match DapInfoID::try_from(req.next_u8()) {
             // Return 0-length string for VendorID, ProductID, SerialNumber
