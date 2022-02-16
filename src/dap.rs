@@ -341,7 +341,7 @@ impl<
         let mask = swj::Pins::from_bits_truncate(req.next_u8());
         let wait_us = req.next_u32().max(3_000_000); // Defined as max 3 seconds
 
-        let mut return_state = 0;
+        let mut return_state = swj::Pins::empty();
 
         self.state.replace_with(|state| match state {
             DapState::None(mut ctx) => {
@@ -360,7 +360,7 @@ impl<
             }
         });
 
-        resp.write_u8(return_state);
+        resp.write_u8(return_state.bits());
     }
 
     fn process_swj_clock(&mut self, mut req: Request, resp: &mut ResponseWriter) {

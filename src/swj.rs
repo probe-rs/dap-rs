@@ -22,7 +22,7 @@ bitflags! {
 /// clock speed is part of the JTAG and SWD traits.
 pub trait Swj {
     /// Runner for SWJ_Pins commands.
-    fn pins(&mut self, output: Pins, mask: Pins, wait_us: u32) -> u8;
+    fn pins(&mut self, output: Pins, mask: Pins, wait_us: u32) -> Pins;
 
     /// Runner for SWJ_Pins commands.
     fn sequence(&mut self, data: &[u8], nbits: usize);

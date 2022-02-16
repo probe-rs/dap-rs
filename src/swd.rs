@@ -2,7 +2,7 @@ use crate::dap::DapContext;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// The available errors for SWD.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Parity error.
@@ -80,7 +80,7 @@ impl Ack {
 }
 
 /// Turn around period configuration.
-#[derive(Copy, Clone, Debug, TryFromPrimitive)]
+#[derive(Copy, Clone, Debug, TryFromPrimitive, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 #[repr(u8)]
@@ -92,7 +92,7 @@ pub enum TurnaroundPeriod {
 }
 
 /// Data phase configuration.
-#[derive(Copy, Clone, Debug, TryFromPrimitive)]
+#[derive(Copy, Clone, Debug, TryFromPrimitive, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 #[repr(u8)]
@@ -159,9 +159,6 @@ pub trait Swd<CONTEXT: DapContext> {
     fn read_ap(&mut self, wait_retries: usize, a: DPRegister) -> Result<u32> {
         self.read(wait_retries, APnDP::AP, a)
     }
-
-    /// Here is the actual hardware implementation to idle low.
-    fn idle_low(&mut self);
 
     /// Set the maximum clock frequency, return `true` if it is valid.
     fn set_clock(&mut self, max_frequency: u32) -> bool;
