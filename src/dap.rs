@@ -114,6 +114,8 @@ impl<
 
         let resp = &mut ResponseWriter::new(req.command, rbuf);
 
+        defmt::trace!("Dap command: {}", req.command);
+
         match req.command {
             Command::DAP_Info => self.process_info(req, resp, version),
             Command::DAP_HostStatus => self.process_host_status(req, resp),
@@ -264,6 +266,13 @@ impl<
             }
         };
 
+        defmt::info!(
+            "DAP connect: {}, SWD: {}, JTAG: {}",
+            port,
+            SWD::AVAILABLE,
+            JTAG::AVAILABLE
+        );
+
         match (SWD::AVAILABLE, JTAG::AVAILABLE, port) {
             // SWD
             (true, true, ConnectPort::Default)
@@ -275,6 +284,7 @@ impl<
                     DapState::Jtag(context) => DapState::Swd(SWD::new(context.release())),
                     v => v,
                 });
+                resp.write_u8(ConnectPortResponse::SWD as u8);
             }
 
             // JTAG
@@ -286,6 +296,7 @@ impl<
                     DapState::Swd(swd) => DapState::Jtag(JTAG::new(swd.release())),
                     v => v,
                 });
+                resp.write_u8(ConnectPortResponse::JTAG as u8);
             }
 
             // Error (tried to connect JTAG or SWD when not available)
@@ -633,7 +644,7 @@ impl<
                     // Parse the next transfer request
                     let transfer_req = req.next_u8();
                     let apndp = swd::APnDP::try_from(transfer_req & (1 << 0)).unwrap();
-                    let rnw = swd::RnW::try_from(transfer_req & (1 << 1)).unwrap();
+                    let rnw = swd::RnW::try_from((transfer_req & (1 << 1)) >> 1).unwrap();
                     let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
                     let vmatch = (transfer_req & (1 << 4)) != 0;
                     let mmask = (transfer_req & (1 << 5)) != 0;
@@ -732,7 +743,7 @@ impl<
         let ntransfers = req.next_u16();
         let transfer_req = req.next_u8();
         let apndp = swd::APnDP::try_from(transfer_req & (1 << 0)).unwrap();
-        let rnw = swd::RnW::try_from(transfer_req & (1 << 1)).unwrap();
+        let rnw = swd::RnW::try_from((transfer_req & (1 << 1)) >> 1).unwrap();
         let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
 
         match &mut self.state {
