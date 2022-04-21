@@ -2,7 +2,7 @@ use super::Request;
 use super::DAP1_PACKET_SIZE;
 use usb_device::class_prelude::*;
 use usb_device::control::{Recipient, RequestType};
-use usb_device::Result;
+use usb_device::{device, Result};
 
 const INTERFACE_CLASS_HID: u8 = 0x03;
 
@@ -38,6 +38,7 @@ const REPORT_DESCRIPTOR: &[u8] = &[
 
 pub struct CmsisDapV1<'a, B: UsbBus> {
     interface: InterfaceNumber,
+    name: StringIndex,
     read_ep: EndpointOut<'a, B>,
     write_ep: EndpointIn<'a, B>,
 }
@@ -46,22 +47,9 @@ impl<B: UsbBus> CmsisDapV1<'_, B> {
     pub fn new(max_packet_size: u16, alloc: &UsbBusAllocator<B>) -> CmsisDapV1<B> {
         CmsisDapV1 {
             interface: alloc.interface(),
-            read_ep: alloc
-                .alloc(
-                    Some(EndpointAddress::from(0x01)),
-                    EndpointType::Interrupt,
-                    max_packet_size,
-                    1,
-                )
-                .expect("alloc_ep failed 1"),
-            write_ep: alloc
-                .alloc(
-                    Some(EndpointAddress::from(0x81)),
-                    EndpointType::Interrupt,
-                    max_packet_size,
-                    1,
-                )
-                .expect("alloc_ep failed 2"),
+            name: alloc.string(),
+            read_ep: alloc.interrupt(max_packet_size, 1),
+            write_ep: alloc.interrupt(max_packet_size, 1),
         }
     }
 
@@ -83,7 +71,14 @@ impl<B: UsbBus> CmsisDapV1<'_, B> {
 
 impl<B: UsbBus> UsbClass<B> for CmsisDapV1<'_, B> {
     fn get_configuration_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
-        writer.interface(self.interface, INTERFACE_CLASS_HID, 0, 0)?;
+        writer.interface_alt(
+            self.interface,
+            device::DEFAULT_ALTERNATE_SETTING,
+            INTERFACE_CLASS_HID,
+            0,
+            0,
+            Some(self.name),
+        )?;
 
         let descriptor_len = REPORT_DESCRIPTOR.len();
         if descriptor_len > u16::max_value() as usize {
@@ -107,6 +102,14 @@ impl<B: UsbBus> UsbClass<B> for CmsisDapV1<'_, B> {
         writer.endpoint(&self.write_ep)?;
 
         Ok(())
+    }
+
+    fn get_string(&self, index: StringIndex, _lang_id: u16) -> Option<&str> {
+        if index == self.name {
+            Some("HS-Probe CMSIS-DAP v1 Interface")
+        } else {
+            None
+        }
     }
 
     fn control_in(&mut self, xfer: ControlIn<B>) {

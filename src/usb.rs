@@ -7,6 +7,7 @@ pub const DAP2_PACKET_SIZE: u16 = 64;
 
 pub mod dap_v1;
 pub mod dap_v2;
+pub mod winusb;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(clippy::large_enum_variant)]

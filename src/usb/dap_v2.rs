@@ -17,30 +17,9 @@ impl<B: UsbBus> CmsisDapV2<'_, B> {
         CmsisDapV2 {
             interface: alloc.interface(),
             name: alloc.string(),
-            read_ep: alloc
-                .alloc(
-                    Some(EndpointAddress::from(0x02)),
-                    EndpointType::Bulk,
-                    max_packet_size,
-                    0xff,
-                )
-                .expect("alloc_ep failed 3"),
-            write_ep: alloc
-                .alloc(
-                    Some(EndpointAddress::from(0x82)),
-                    EndpointType::Bulk,
-                    max_packet_size,
-                    0xff,
-                )
-                .expect("alloc_ep failed 4"),
-            trace_ep: alloc
-                .alloc(
-                    Some(EndpointAddress::from(0x83)),
-                    EndpointType::Bulk,
-                    max_packet_size,
-                    0xff,
-                )
-                .expect("alloc_ep failed 5"),
+            read_ep: alloc.bulk(max_packet_size),
+            write_ep: alloc.bulk(max_packet_size),
+            trace_ep: alloc.bulk(max_packet_size),
             trace_busy: false,
         }
     }

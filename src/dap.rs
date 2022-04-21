@@ -114,7 +114,7 @@ impl<
 
         let resp = &mut ResponseWriter::new(req.command, rbuf);
 
-        defmt::trace!("Dap command: {}", req.command);
+        // defmt::trace!("Dap command: {}", req.command);
 
         match req.command {
             Command::DAP_Info => self.process_info(req, resp, version),
@@ -266,12 +266,12 @@ impl<
             }
         };
 
-        defmt::info!(
-            "DAP connect: {}, SWD: {}, JTAG: {}",
-            port,
-            SWD::AVAILABLE,
-            JTAG::AVAILABLE
-        );
+        // defmt::info!(
+        // "DAP connect: {}, SWD: {}, JTAG: {}",
+        // port,
+        // SWD::AVAILABLE,
+        // JTAG::AVAILABLE
+        // );
 
         match (SWD::AVAILABLE, JTAG::AVAILABLE, port) {
             // SWD
@@ -338,6 +338,7 @@ impl<
         match (SWD::AVAILABLE, JTAG::AVAILABLE, &mut self.state) {
             (_, true, DapState::Jtag(jtag)) => {
                 // TODO: Implement one day.
+                let _ = idx;
                 resp.write_err();
             }
             (true, _, DapState::Swd(swd)) => {
