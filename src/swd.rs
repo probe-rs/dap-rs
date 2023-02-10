@@ -1,4 +1,3 @@
-use crate::dap::DapContext;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// The available errors for SWD.
@@ -102,18 +101,9 @@ pub enum DataPhase {
 }
 
 /// Definition of SWD communication.
-pub trait Swd<CONTEXT: DapContext> {
+pub trait Swd<DEPS>: From<DEPS> {
     /// If SWD is available or not.
     const AVAILABLE: bool;
-
-    /// Create the SWD from context
-    fn new(context: CONTEXT) -> Self;
-
-    /// Release the context from the SWD
-    fn release(self) -> CONTEXT;
-
-    /// Configure SWD, return true if the configuration was successful.
-    fn configure(&mut self, period: TurnaroundPeriod, data_phase: DataPhase) -> bool;
 
     /// Helper method over `read_inner` to retry during `AckWait`.
     fn read(&mut self, wait_retries: usize, apndp: APnDP, a: DPRegister) -> Result<u32> {

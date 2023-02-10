@@ -1,10 +1,9 @@
-use crate::swo::{SwoControl, SwoMode, SwoTransport};
-use crate::*;
-use core::convert::TryFrom;
+use crate::{swj, jtag, swd, swo, usb};
 
 mod command;
 mod request;
 mod response;
+mod state;
 
 pub use command::*;
 pub use request::*;
@@ -12,30 +11,7 @@ pub use response::*;
 
 pub use embedded_hal::blocking::delay::DelayUs;
 
-/// TODO: Figure out how to structure this.
-enum DapState<CONTEXT: DapContext + swj::Swj, JTAG: jtag::Jtag<CONTEXT>, SWD: swd::Swd<CONTEXT>> {
-    None(CONTEXT),
-    Jtag(JTAG),
-    Swd(SWD),
-}
-
-impl<CONTEXT: DapContext + swj::Swj, JTAG: jtag::Jtag<CONTEXT>, SWD: swd::Swd<CONTEXT>>
-    DapState<CONTEXT, JTAG, SWD>
-{
-    #[inline(always)]
-    pub fn replace_with<F: FnOnce(Self) -> Self>(&mut self, f: F) {
-        unsafe {
-            replace_with::replace_with_or_abort_unchecked(self, f);
-        }
-    }
-}
-
-/// Context for the HW implementations of JTAG, SWD and SWJ.
-/// E.g. pins and other common parts are shared in this struct.
-pub trait DapContext {
-    /// Set pins in high impedance mode
-    fn high_impedance_mode(&mut self);
-}
+use state::State;
 
 /// LED control trait.
 pub trait DapLeds {
@@ -44,16 +20,8 @@ pub trait DapLeds {
 }
 
 /// DAP handler.
-pub struct Dap<
-    'a,
-    CONTEXT: DapContext + swj::Swj,
-    LEDS: DapLeds,
-    WAIT: DelayUs<u32>,
-    JTAG: jtag::Jtag<CONTEXT>,
-    SWD: swd::Swd<CONTEXT>,
-    SWO: swo::Swo,
-> {
-    state: DapState<CONTEXT, JTAG, SWD>,
+pub struct Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> {
+    state: State<DEPS, SWD, JTAG>,
     swo: Option<SWO>,
     swo_streaming: bool,
     swd_wait_retries: usize,
@@ -64,19 +32,18 @@ pub struct Dap<
     wait: WAIT,
 }
 
-impl<
-        'a,
-        CONTEXT: DapContext + swj::Swj,
-        LEDS: DapLeds,
-        WAIT: DelayUs<u32>,
-        JTAG: jtag::Jtag<CONTEXT>,
-        SWD: swd::Swd<CONTEXT>,
-        SWO: swo::Swo,
-    > Dap<'a, CONTEXT, LEDS, WAIT, JTAG, SWD, SWO>
+impl<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO>
+where
+    DEPS: swj::Dependencies<SWD, JTAG>,
+    LEDS: DapLeds,
+    WAIT: DelayUs<u32>,
+    JTAG: jtag::Jtag<DEPS>,
+    SWD: swd::Swd<DEPS>,
+    SWO: swo::Swo,
 {
-    /// Create a Dap handler from parts.
-    pub fn from_parts(
-        context: CONTEXT,
+    /// Create a Dap handler
+    pub fn new(
+        dependencies: DEPS,
         leds: LEDS,
         wait: WAIT,
         swo: Option<SWO>,
@@ -86,7 +53,7 @@ impl<
         assert!(SWD::AVAILABLE || JTAG::AVAILABLE);
 
         Dap {
-            state: DapState::None(context),
+            state: State::new(dependencies),
             swo,
             swo_streaming: false,
             swd_wait_retries: 5,
@@ -157,19 +124,13 @@ impl<
 
     /// Suspend the interface.
     pub fn suspend(&mut self) {
-        self.state.replace_with(|state| match state {
-            DapState::Swd(swd) => {
-                let mut ctx = swd.release();
-                ctx.high_impedance_mode();
-                DapState::None(ctx)
-            }
-            DapState::Jtag(jtag) => {
-                let mut ctx = jtag.release();
-                ctx.high_impedance_mode();
-                DapState::None(ctx)
-            }
-            v => v,
-        });
+        self.state.to_none();
+
+        if let State::None { deps, .. } = &mut self.state {
+            deps.high_impedance_mode();
+        } else {
+            unreachable!();
+        }
     }
 
     fn process_info(&mut self, mut req: Request, resp: &mut ResponseWriter, version: DapVersion) {
@@ -279,11 +240,7 @@ impl<
             | (true, true, ConnectPort::SWD)
             | (true, false, ConnectPort::Default)
             | (true, false, ConnectPort::SWD) => {
-                self.state.replace_with(|state| match state {
-                    DapState::None(context) => DapState::Swd(SWD::new(context)),
-                    DapState::Jtag(context) => DapState::Swd(SWD::new(context.release())),
-                    v => v,
-                });
+                self.state.to_swd();
                 resp.write_u8(ConnectPortResponse::SWD as u8);
             }
 
@@ -291,11 +248,7 @@ impl<
             (true, true, ConnectPort::JTAG)
             | (false, true, ConnectPort::Default)
             | (false, true, ConnectPort::JTAG) => {
-                self.state.replace_with(|state| match state {
-                    DapState::None(ctx) => DapState::Jtag(JTAG::new(ctx)),
-                    DapState::Swd(swd) => DapState::Jtag(JTAG::new(swd.release())),
-                    v => v,
-                });
+                self.state.to_jtag();
                 resp.write_u8(ConnectPortResponse::JTAG as u8);
             }
 
@@ -310,38 +263,29 @@ impl<
     }
 
     fn process_disconnect(&mut self, _req: Request, resp: &mut ResponseWriter) {
-        self.state.replace_with(|state| match state {
-            DapState::Swd(swd) => {
-                let mut ctx = swd.release();
-                ctx.high_impedance_mode();
-                DapState::None(ctx)
-            }
-            DapState::Jtag(jtag) => {
-                let mut ctx = jtag.release();
-                ctx.high_impedance_mode();
-                DapState::None(ctx)
-            }
-            v => v,
-        });
+        self.state.to_none();
+
+        if let State::None { deps, .. } = &mut self.state {
+            deps.high_impedance_mode();
+        } else {
+            unreachable!();
+        }
 
         resp.write_ok();
     }
 
     fn process_write_abort(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        if matches!(self.state, DapState::None(_)) {
-            resp.write_err();
-            return;
-        }
+        self.state.to_last_mode();
 
         let idx = req.next_u8();
         let word = req.next_u32();
         match (SWD::AVAILABLE, JTAG::AVAILABLE, &mut self.state) {
-            (_, true, DapState::Jtag(jtag)) => {
+            (_, true, State::Jtag(_jtag)) => {
                 // TODO: Implement one day.
                 let _ = idx;
                 resp.write_err();
             }
-            (true, _, DapState::Swd(swd)) => {
+            (true, _, State::Swd(swd)) => {
                 match swd.write_dp(self.swd_wait_retries, swd::DPRegister::DPIDR, word) {
                     Ok(_) => resp.write_ok(),
                     Err(_) => resp.write_err(),
@@ -368,37 +312,20 @@ impl<
     fn process_swj_pins(&mut self, mut req: Request, resp: &mut ResponseWriter) {
         let output = swj::Pins::from_bits_truncate(req.next_u8());
         let mask = swj::Pins::from_bits_truncate(req.next_u8());
-        let wait_us = req.next_u32().max(3_000_000); // Defined as max 3 seconds
+        let wait_us = req.next_u32().min(3_000_000); // Defined as max 3 seconds
 
-        let mut return_state = swj::Pins::empty();
+        self.state.to_none();
 
-        self.state.replace_with(|state| match state {
-            DapState::None(mut ctx) => {
-                return_state = ctx.pins(output, mask, wait_us);
-                DapState::None(ctx)
-            }
-            DapState::Jtag(jtag) => {
-                let mut ctx = jtag.release();
-                return_state = ctx.pins(output, mask, wait_us);
-                DapState::Jtag(JTAG::new(ctx))
-            }
-            DapState::Swd(swd) => {
-                let mut ctx = swd.release();
-                return_state = ctx.pins(output, mask, wait_us);
-                DapState::Swd(SWD::new(ctx))
-            }
-        });
-
-        resp.write_u8(return_state.bits());
+        if let State::None { deps, .. } = &mut self.state {
+            resp.write_u8(deps.process_swj_pins(output, mask, wait_us).bits());
+        } else {
+            unreachable!();
+        }
     }
 
     fn process_swj_clock(&mut self, mut req: Request, resp: &mut ResponseWriter) {
         let max_frequency = req.next_u32();
-        let valid = match &mut self.state {
-            DapState::None(ctx) => ctx.set_clock(max_frequency),
-            DapState::Jtag(jtag) => jtag.set_clock(max_frequency),
-            DapState::Swd(swd) => swd.set_clock(max_frequency),
-        };
+        let valid = self.state.set_clock(max_frequency);
 
         if valid {
             resp.write_ok();
@@ -424,24 +351,15 @@ impl<
             return;
         };
 
-        self.state.replace_with(|state| match state {
-            DapState::None(ctx) => {
-                resp.write_err();
-                DapState::None(ctx)
-            }
-            DapState::Jtag(jtag) => {
-                let mut ctx = jtag.release();
-                ctx.sequence(seq, nbits);
-                resp.write_ok();
-                DapState::Jtag(JTAG::new(ctx))
-            }
-            DapState::Swd(swd) => {
-                let mut ctx = swd.release();
-                ctx.sequence(seq, nbits);
-                resp.write_ok();
-                DapState::Swd(SWD::new(ctx))
-            }
-        });
+        self.state.to_none();
+
+        if let State::None { deps, .. } = &mut self.state {
+            deps.process_swj_sequence(seq, nbits);
+        } else {
+            unreachable!();
+        }
+
+        resp.write_ok();
     }
 
     fn process_swd_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
@@ -456,18 +374,18 @@ impl<
         }
     }
 
-    fn process_swd_sequence(&self, req: Request, resp: &mut ResponseWriter) {
+    fn process_swd_sequence(&self, _req: Request, _resp: &mut ResponseWriter) {
         // TODO: Needs implementing
     }
 
     fn process_swo_transport(&mut self, mut req: Request, resp: &mut ResponseWriter) {
         let transport = req.next_u8();
-        match SwoTransport::try_from(transport) {
-            Ok(SwoTransport::None) | Ok(SwoTransport::DAPCommand) => {
+        match swo::SwoTransport::try_from(transport) {
+            Ok(swo::SwoTransport::None) | Ok(swo::SwoTransport::DAPCommand) => {
                 self.swo_streaming = false;
                 resp.write_ok();
             }
-            Ok(SwoTransport::USBEndpoint) => {
+            Ok(swo::SwoTransport::USBEndpoint) => {
                 self.swo_streaming = true;
                 resp.write_ok();
             }
@@ -485,7 +403,7 @@ impl<
             return;
         };
 
-        match SwoMode::try_from(mode) {
+        match swo::SwoMode::try_from(mode) {
             Ok(mode) => {
                 swo.set_mode(mode);
                 resp.write_ok();
@@ -512,7 +430,7 @@ impl<
             return;
         };
 
-        match SwoControl::try_from(req.next_u8()) {
+        match swo::SwoControl::try_from(req.next_u8()) {
             Ok(control) => {
                 swo.set_control(control);
                 resp.write_ok();
@@ -590,8 +508,10 @@ impl<
     }
 
     fn process_jtag_sequence(&mut self, req: Request, resp: &mut ResponseWriter) {
+        self.state.to_jtag();
+
         match &mut self.state {
-            DapState::Jtag(jtag) => {
+            State::Jtag(jtag) => {
                 // Run requested JTAG sequences. Cannot fail.
                 let size = jtag.sequences(req.rest(), resp.remaining());
                 resp.skip(size as _);
@@ -625,15 +545,17 @@ impl<
     }
 
     fn process_transfer(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+        self.state.to_last_mode();
+
         let _idx = req.next_u8();
         let ntransfers = req.next_u8();
         let mut match_mask = 0xFFFF_FFFFu32;
 
         match &mut self.state {
-            DapState::Jtag(jtag) => {
+            State::Jtag(_jtag) => {
                 // TODO: Implement one day.
             }
-            DapState::Swd(swd) => {
+            State::Swd(swd) => {
                 // Skip two bytes in resp to reserve space for final status,
                 // which we update while processing.
                 resp.write_u16(0);
@@ -740,6 +662,8 @@ impl<
     }
 
     fn process_transfer_block(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+        self.state.to_last_mode();
+
         let _idx = req.next_u8();
         let ntransfers = req.next_u16();
         let transfer_req = req.next_u8();
@@ -748,10 +672,10 @@ impl<
         let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
 
         match &mut self.state {
-            DapState::Jtag(jtag) => {
+            State::Jtag(_jtag) => {
                 // TODO: Implement one day.
             }
-            DapState::Swd(swd) => {
+            State::Swd(swd) => {
                 // Skip three bytes in resp to reserve space for final status,
                 // which we update while processing.
                 resp.write_u16(0);
