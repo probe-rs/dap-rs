@@ -1,14 +1,6 @@
-use crate::dap::DapContext;
-
-pub trait Jtag<CONTEXT: DapContext> {
+pub trait Jtag<DEPS>: From<DEPS> {
     /// If JTAG is available or not.
     const AVAILABLE: bool;
-
-    /// Create the JTAG from context
-    fn new(context: CONTEXT) -> Self;
-
-    /// Release the context from the JTAG
-    fn release(self) -> CONTEXT;
 
     /// Handle a JTAG sequence request.
     fn sequences(&mut self, data: &[u8], rxbuf: &mut [u8]) -> u32;
