@@ -1,4 +1,4 @@
-use crate::{swj, jtag, swd, swo, usb};
+use crate::{jtag, swd, swj, swo, usb};
 
 mod command;
 mod request;
@@ -9,7 +9,7 @@ pub use command::*;
 pub use request::*;
 pub use response::*;
 
-pub use embedded_hal::blocking::delay::DelayUs;
+pub use embedded_hal::delay::DelayNs;
 
 use state::State;
 
@@ -36,7 +36,7 @@ impl<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, 
 where
     DEPS: swj::Dependencies<SWD, JTAG>,
     LEDS: DapLeds,
-    WAIT: DelayUs<u32>,
+    WAIT: DelayNs,
     JTAG: jtag::Jtag<DEPS>,
     SWD: swd::Swd<DEPS>,
     SWO: swo::Swo,
