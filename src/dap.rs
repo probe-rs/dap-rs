@@ -374,8 +374,71 @@ where
         }
     }
 
-    fn process_swd_sequence(&self, _req: Request, _resp: &mut ResponseWriter) {
-        // TODO: Needs implementing
+    fn process_swd_sequence(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+        let sequence_info = req.next_u8();
+
+        let nbits: usize = match sequence_info & 0x3F {
+            // CMSIS-DAP says 0 means 64 bits
+            0 => 64,
+            // Other integers are normal.
+            n => n as usize,
+        };
+        let output = (sequence_info & 0x80) == 0;
+
+        if output {
+            self.process_swd_sequence_output(req, resp, nbits);
+        } else {
+            self.process_swd_sequence_input(req, resp, nbits);
+        }
+    }
+
+    fn process_swd_sequence_output(&mut self, req: Request, resp: &mut ResponseWriter, nbits: usize) {
+        let payload = req.rest();
+        let nbytes = (nbits + 7) / 8;
+        let seq = if nbytes <= payload.len() {
+            &payload[..nbytes]
+        } else {
+            resp.write_err();
+            return;
+        };
+
+        self.state.to_swd();
+
+        match &mut self.state {
+            State::Swd(swd) => {
+                if swd.write_sequence(nbits, seq).is_ok() {
+                    resp.write_ok();
+                } else {
+                    resp.write_err();
+                }
+            },
+            _ => resp.write_err(),
+        }
+    }
+
+    fn process_swd_sequence_input(&mut self, _req: Request, resp: &mut ResponseWriter, nbits: usize) {
+        let payload = resp.remaining();
+        let nbytes = (nbits + 7) / 8;
+        let buf = if nbytes + 1 <= payload.len() {
+            &mut payload[1..nbytes + 1]
+        } else {
+            resp.write_err();
+            return;
+        };
+
+        self.state.to_swd();
+
+        match &mut self.state {
+            State::Swd(swd) => {
+                if swd.read_sequence(nbits, buf).is_ok() {
+                    resp.write_ok();
+                    resp.skip(nbytes);
+                } else {
+                    resp.write_err();
+                }
+            },
+            _ => resp.write_err(),
+        }
     }
 
     fn process_swo_transport(&mut self, mut req: Request, resp: &mut ResponseWriter) {

@@ -152,6 +152,12 @@ pub trait Swd<DEPS>: From<DEPS> {
 
     /// Set the maximum clock frequency, return `true` if it is valid.
     fn set_clock(&mut self, max_frequency: u32) -> bool;
+
+    /// Write a sequence of bits using SWDIO and the clock line running at the configured freq.
+    fn write_sequence(&mut self, num_bits: usize, data: &[u8]) -> Result<()>;
+
+    /// Read a sequence of bits using SWDIO and the clock line running at the configured freq.
+    fn read_sequence(&mut self, num_bits: usize, data: &mut [u8]) -> Result<()>;
 }
 
 /// Helper used by `Swd::read_inner` and `Swd::write_inner` to make the request byte.
