@@ -392,7 +392,12 @@ where
         }
     }
 
-    fn process_swd_sequence_output(&mut self, req: Request, resp: &mut ResponseWriter, nbits: usize) {
+    fn process_swd_sequence_output(
+        &mut self,
+        req: Request,
+        resp: &mut ResponseWriter,
+        nbits: usize,
+    ) {
         let payload = req.rest();
         let nbytes = (nbits + 7) / 8;
         let seq = if nbytes <= payload.len() {
@@ -411,12 +416,17 @@ where
                 } else {
                     resp.write_err();
                 }
-            },
+            }
             _ => resp.write_err(),
         }
     }
 
-    fn process_swd_sequence_input(&mut self, _req: Request, resp: &mut ResponseWriter, nbits: usize) {
+    fn process_swd_sequence_input(
+        &mut self,
+        _req: Request,
+        resp: &mut ResponseWriter,
+        nbits: usize,
+    ) {
         let payload = resp.remaining();
         let nbytes = (nbits + 7) / 8;
         let buf = if nbytes + 1 <= payload.len() {
@@ -436,7 +446,7 @@ where
                 } else {
                     resp.write_err();
                 }
-            },
+            }
             _ => resp.write_err(),
         }
     }
@@ -867,23 +877,31 @@ mod test {
         fn react_to_host_status(&mut self, _host_status: HostStatus) {}
     }
 
-    struct StdDelayUs{}
-    impl DelayUs<u32> for StdDelayUs {
-        fn delay_us(&mut self, us: u32) {
-            std::thread::sleep(std::time::Duration::from_micros(us as u64));
+    struct StdDelayUs {}
+    impl DelayNs for StdDelayUs {
+        fn delay_ns(&mut self, ns: u32) {
+            std::thread::sleep(std::time::Duration::from_nanos(ns as u64));
         }
     }
 
-    type TestDap<'a> = Dap<'a, MockSwdJtagDevice, FakeLEDs, StdDelayUs, MockSwdJtagDevice, MockSwdJtagDevice, swo::MockSwo>;
+    type TestDap<'a> = Dap<
+        'a,
+        MockSwdJtagDevice,
+        FakeLEDs,
+        StdDelayUs,
+        MockSwdJtagDevice,
+        MockSwdJtagDevice,
+        swo::MockSwo,
+    >;
 
     #[test]
     fn test_swd_output_reset() {
         let mut dap = TestDap::new(
             MockSwdJtagDevice::new(),
-            FakeLEDs{},
-            StdDelayUs{},
+            FakeLEDs {},
+            StdDelayUs {},
             None,
-            "test_dap"
+            "test_dap",
         );
 
         let report = [0x1Du8, 52, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0];
@@ -891,8 +909,11 @@ mod test {
         dap.state.to_swd();
         match &mut dap.state {
             State::Swd(swd) => {
-                swd.expect_write_sequence().once().with(eq(52), eq([0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0])).return_const(Ok(()));
-            },
+                swd.expect_write_sequence()
+                    .once()
+                    .with(eq(52), eq([0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0]))
+                    .return_const(Ok(()));
+            }
             _ => assert!(false, "can't switch to swd"),
         }
         let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
@@ -904,10 +925,10 @@ mod test {
     fn test_swd_output_max_size() {
         let mut dap = TestDap::new(
             MockSwdJtagDevice::new(),
-            FakeLEDs{},
-            StdDelayUs{},
+            FakeLEDs {},
+            StdDelayUs {},
             None,
-            "test_dap"
+            "test_dap",
         );
 
         let report = [0x1Du8, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00];
@@ -915,8 +936,14 @@ mod test {
         dap.state.to_swd();
         match &mut dap.state {
             State::Swd(swd) => {
-                swd.expect_write_sequence().once().with(eq(64), eq([0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00])).return_const(Ok(()));
-            },
+                swd.expect_write_sequence()
+                    .once()
+                    .with(
+                        eq(64),
+                        eq([0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]),
+                    )
+                    .return_const(Ok(()));
+            }
             _ => assert!(false, "can't switch to swd"),
         }
         let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
@@ -928,10 +955,10 @@ mod test {
     fn test_swd_input() {
         let mut dap = TestDap::new(
             MockSwdJtagDevice::new(),
-            FakeLEDs{},
-            StdDelayUs{},
+            FakeLEDs {},
+            StdDelayUs {},
             None,
-            "test_dap"
+            "test_dap",
         );
 
         let report = [0x1Du8, 0x80 | 52];
@@ -939,28 +966,32 @@ mod test {
         dap.state.to_swd();
         match &mut dap.state {
             State::Swd(swd) => {
-                swd.expect_read_sequence().once().withf(|nbits, buf| {
-                    buf.len() >= 7 && *nbits == 52
-                }).returning(|_, buf| {
-                    buf[..7].clone_from_slice(&[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0]);
-                    Ok(())
-                });
-            },
+                swd.expect_read_sequence()
+                    .once()
+                    .withf(|nbits, buf| buf.len() >= 7 && *nbits == 52)
+                    .returning(|_, buf| {
+                        buf[..7].clone_from_slice(&[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0]);
+                        Ok(())
+                    });
+            }
             _ => assert!(false, "can't switch to swd"),
         }
         let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
         assert_eq!(rsize, 9);
-        assert_eq!(&rbuf[..9], &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0])
+        assert_eq!(
+            &rbuf[..9],
+            &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0]
+        )
     }
 
     #[test]
     fn test_swd_input_max_size() {
         let mut dap = TestDap::new(
             MockSwdJtagDevice::new(),
-            FakeLEDs{},
-            StdDelayUs{},
+            FakeLEDs {},
+            StdDelayUs {},
             None,
-            "test_dap"
+            "test_dap",
         );
 
         let report = [0x1Du8, 0x80];
@@ -968,17 +999,22 @@ mod test {
         dap.state.to_swd();
         match &mut dap.state {
             State::Swd(swd) => {
-                swd.expect_read_sequence().once().withf(|nbits, buf| {
-                    buf.len() >= 8 && *nbits == 64
-                }).returning(|_, buf| {
-                    buf[..8].clone_from_slice(&[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]);
-                    Ok(())
-                });
-            },
+                swd.expect_read_sequence()
+                    .once()
+                    .withf(|nbits, buf| buf.len() >= 8 && *nbits == 64)
+                    .returning(|_, buf| {
+                        buf[..8]
+                            .clone_from_slice(&[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]);
+                        Ok(())
+                    });
+            }
             _ => assert!(false, "can't switch to swd"),
         }
         let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
         assert_eq!(rsize, 10);
-        assert_eq!(&rbuf[..10], &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00])
+        assert_eq!(
+            &rbuf[..10],
+            &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]
+        )
     }
 }
