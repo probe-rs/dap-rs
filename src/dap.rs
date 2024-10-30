@@ -375,79 +375,44 @@ where
     }
 
     fn process_swd_sequence(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        let sequence_info = req.next_u8();
-
-        let nbits: usize = match sequence_info & 0x3F {
-            // CMSIS-DAP says 0 means 64 bits
-            0 => 64,
-            // Other integers are normal.
-            n => n as usize,
-        };
-        let output = (sequence_info & 0x80) == 0;
-
-        if output {
-            self.process_swd_sequence_output(req, resp, nbits);
-        } else {
-            self.process_swd_sequence_input(req, resp, nbits);
-        }
-    }
-
-    fn process_swd_sequence_output(
-        &mut self,
-        req: Request,
-        resp: &mut ResponseWriter,
-        nbits: usize,
-    ) {
-        let payload = req.rest();
-        let nbytes = (nbits + 7) / 8;
-        let seq = if nbytes <= payload.len() {
-            &payload[..nbytes]
-        } else {
-            resp.write_err();
-            return;
-        };
-
         self.state.to_swd();
-
-        match &mut self.state {
-            State::Swd(swd) => {
-                if swd.write_sequence(nbits, seq).is_ok() {
-                    resp.write_ok();
-                } else {
-                    resp.write_err();
-                }
+        let swd = match &mut self.state {
+            State::Swd(swd) => swd,
+            _ => {
+                resp.write_err();
+                return;
             }
-            _ => resp.write_err(),
-        }
-    }
-
-    fn process_swd_sequence_input(
-        &mut self,
-        _req: Request,
-        resp: &mut ResponseWriter,
-        nbits: usize,
-    ) {
-        let payload = resp.remaining();
-        let nbytes = (nbits + 7) / 8;
-        let buf = if nbytes + 1 <= payload.len() {
-            &mut payload[1..nbytes + 1]
-        } else {
-            resp.write_err();
-            return;
         };
 
-        self.state.to_swd();
+        resp.write_ok(); // assume ok until we finish
+        let sequence_count = req.next_u8();
+        let success = (0..sequence_count).map(|_| {
+            // parse the seqnence info
+            let sequence_info = req.next_u8();
+            let nbits: usize = match sequence_info & 0x3F {
+                // CMSIS-DAP says 0 means 64 bits
+                0 => 64,
+                // Other integers are normal.
+                n => n as usize,
+            };
+            let nbytes = (nbits + 7) / 8;
+            let output = (sequence_info & 0x80) == 0;
 
-        match &mut self.state {
-            State::Swd(swd) => {
-                if swd.read_sequence(nbits, buf).is_ok() {
-                    resp.write_ok();
-                    resp.skip(nbytes);
-                } else {
-                    resp.write_err();
-                }
+            if output {
+                let output_data = req.data.get(..nbytes).ok_or(())?;
+                swd.write_sequence(nbits, output_data).or(Err(()))?;
+                req.consume(nbytes);
+                Ok(0)
+            } else {
+                let input_data = resp.remaining().get_mut(..nbytes).ok_or(())?;
+                swd.read_sequence(nbits, input_data).or(Err(()))?;
+                resp.skip(nbytes);
+                Ok(nbytes)
             }
-            _ => resp.write_err(),
+        }).all(|r: Result<usize, ()>| r.is_ok());
+        
+        if !success {
+            resp.write_u8_at(0, 0xFF);
         }
     }
 
@@ -904,7 +869,7 @@ mod test {
             "test_dap",
         );
 
-        let report = [0x1Du8, 52, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0];
+        let report = [0x1Du8, 1, 52, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0];
         let mut rbuf = [0u8; 64];
         dap.state.to_swd();
         match &mut dap.state {
@@ -931,7 +896,7 @@ mod test {
             "test_dap",
         );
 
-        let report = [0x1Du8, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00];
+        let report = [0x1Du8, 1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00];
         let mut rbuf = [0u8; 64];
         dap.state.to_swd();
         match &mut dap.state {
@@ -961,7 +926,7 @@ mod test {
             "test_dap",
         );
 
-        let report = [0x1Du8, 0x80 | 52];
+        let report = [0x1Du8, 1, 0x80 | 52];
         let mut rbuf = [0u8; 64];
         dap.state.to_swd();
         match &mut dap.state {
@@ -994,7 +959,7 @@ mod test {
             "test_dap",
         );
 
-        let report = [0x1Du8, 0x80];
+        let report = [0x1Du8, 1, 0x80];
         let mut rbuf = [0u8; 64];
         dap.state.to_swd();
         match &mut dap.state {
@@ -1015,6 +980,54 @@ mod test {
         assert_eq!(
             &rbuf[..10],
             &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]
+        )
+    }
+
+    #[test]
+    fn test_target_select() {
+        let mut dap = TestDap::new(
+            MockSwdJtagDevice::new(),
+            FakeLEDs {},
+            StdDelayUs {},
+            None,
+            "test_dap",
+        );
+
+        // write 8 bits, read 5 bits, write 33 bits
+        let report = [0x1Du8, 3, 8, 0b10111101, 0x80 | 5, 33, 0x56, 0x83, 0xAB, 0x32, 0x01];
+        let mut rbuf = [0u8; 64];
+        dap.state.to_swd();
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_write_sequence()
+                    .once()
+                    .with(
+                        eq(8),
+                        eq([0b10111101u8]),
+                    )
+                    .return_const(Ok(()));
+                swd.expect_read_sequence()
+                    .once()
+                    .withf(|nbits, buf| buf.len() >= 1 && *nbits == 5)
+                    .returning(|_, buf| {
+                        buf[0] = 0x1F;
+                        Ok(())
+                    });
+                swd.expect_write_sequence()
+                    .once()
+                    .with(
+                        eq(33),
+                        eq([0x56, 0x83, 0xAB, 0x32, 0x01]),
+                    )
+                    .return_const(Ok(()));
+            }
+            _ => assert!(false, "can't switch to swd"),
+        }
+        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        assert_eq!(rsize, 3);
+        assert_eq!(
+            &rbuf[..3],
+            &[0x1Du8, 0x00, 0x1F]
         )
     }
 }

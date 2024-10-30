@@ -33,6 +33,10 @@ impl<'a> Request<'a> {
         value
     }
 
+    pub fn consume(&mut self, count: usize) {
+        self.data = &self.data[count..];
+    }
+
     pub fn rest(self) -> &'a [u8] {
         &self.data
     }
