@@ -374,8 +374,46 @@ where
         }
     }
 
-    fn process_swd_sequence(&self, _req: Request, _resp: &mut ResponseWriter) {
-        // TODO: Needs implementing
+    fn process_swd_sequence(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+        self.state.to_swd();
+        let swd = match &mut self.state {
+            State::Swd(swd) => swd,
+            _ => {
+                resp.write_err();
+                return;
+            }
+        };
+
+        resp.write_ok(); // assume ok until we finish
+        let sequence_count = req.next_u8();
+        let success = (0..sequence_count).map(|_| {
+            // parse the seqnence info
+            let sequence_info = req.next_u8();
+            let nbits: usize = match sequence_info & 0x3F {
+                // CMSIS-DAP says 0 means 64 bits
+                0 => 64,
+                // Other integers are normal.
+                n => n as usize,
+            };
+            let nbytes = (nbits + 7) / 8;
+            let output = (sequence_info & 0x80) == 0;
+
+            if output {
+                let output_data = req.data.get(..nbytes).ok_or(())?;
+                swd.write_sequence(nbits, output_data).or(Err(()))?;
+                req.consume(nbytes);
+                Ok(0)
+            } else {
+                let input_data = resp.remaining().get_mut(..nbytes).ok_or(())?;
+                swd.read_sequence(nbits, input_data).or(Err(()))?;
+                resp.skip(nbytes);
+                Ok(nbytes)
+            }
+        }).all(|r: Result<usize, ()>| r.is_ok());
+        
+        if !success {
+            resp.write_u8_at(0, 0xFF);
+        }
     }
 
     fn process_swo_transport(&mut self, mut req: Request, resp: &mut ResponseWriter) {
@@ -790,5 +828,206 @@ impl<T> CheckResult<T> for swd::Result<T> {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::mock_device::*;
+    use mockall::predicate::*;
+
+    struct FakeLEDs {}
+    impl DapLeds for FakeLEDs {
+        fn react_to_host_status(&mut self, _host_status: HostStatus) {}
+    }
+
+    struct StdDelayUs {}
+    impl DelayNs for StdDelayUs {
+        fn delay_ns(&mut self, ns: u32) {
+            std::thread::sleep(std::time::Duration::from_nanos(ns as u64));
+        }
+    }
+
+    type TestDap<'a> = Dap<
+        'a,
+        MockSwdJtagDevice,
+        FakeLEDs,
+        StdDelayUs,
+        MockSwdJtagDevice,
+        MockSwdJtagDevice,
+        swo::MockSwo,
+    >;
+
+    #[test]
+    fn test_swd_output_reset() {
+        let mut dap = TestDap::new(
+            MockSwdJtagDevice::new(),
+            FakeLEDs {},
+            StdDelayUs {},
+            None,
+            "test_dap",
+        );
+
+        let report = [0x1Du8, 1, 52, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0];
+        let mut rbuf = [0u8; 64];
+        dap.state.to_swd();
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_write_sequence()
+                    .once()
+                    .with(eq(52), eq([0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0]))
+                    .return_const(Ok(()));
+            }
+            _ => assert!(false, "can't switch to swd"),
+        }
+        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        assert_eq!(rsize, 2);
+        assert_eq!(&rbuf[..2], &[0x1Du8, 0x00])
+    }
+
+    #[test]
+    fn test_swd_output_max_size() {
+        let mut dap = TestDap::new(
+            MockSwdJtagDevice::new(),
+            FakeLEDs {},
+            StdDelayUs {},
+            None,
+            "test_dap",
+        );
+
+        let report = [0x1Du8, 1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00];
+        let mut rbuf = [0u8; 64];
+        dap.state.to_swd();
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_write_sequence()
+                    .once()
+                    .with(
+                        eq(64),
+                        eq([0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]),
+                    )
+                    .return_const(Ok(()));
+            }
+            _ => assert!(false, "can't switch to swd"),
+        }
+        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        assert_eq!(rsize, 2);
+        assert_eq!(&rbuf[..2], &[0x1Du8, 0x00])
+    }
+
+    #[test]
+    fn test_swd_input() {
+        let mut dap = TestDap::new(
+            MockSwdJtagDevice::new(),
+            FakeLEDs {},
+            StdDelayUs {},
+            None,
+            "test_dap",
+        );
+
+        let report = [0x1Du8, 1, 0x80 | 52];
+        let mut rbuf = [0u8; 64];
+        dap.state.to_swd();
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_read_sequence()
+                    .once()
+                    .withf(|nbits, buf| buf.len() >= 7 && *nbits == 52)
+                    .returning(|_, buf| {
+                        buf[..7].clone_from_slice(&[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0]);
+                        Ok(())
+                    });
+            }
+            _ => assert!(false, "can't switch to swd"),
+        }
+        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        assert_eq!(rsize, 9);
+        assert_eq!(
+            &rbuf[..9],
+            &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0]
+        )
+    }
+
+    #[test]
+    fn test_swd_input_max_size() {
+        let mut dap = TestDap::new(
+            MockSwdJtagDevice::new(),
+            FakeLEDs {},
+            StdDelayUs {},
+            None,
+            "test_dap",
+        );
+
+        let report = [0x1Du8, 1, 0x80];
+        let mut rbuf = [0u8; 64];
+        dap.state.to_swd();
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_read_sequence()
+                    .once()
+                    .withf(|nbits, buf| buf.len() >= 8 && *nbits == 64)
+                    .returning(|_, buf| {
+                        buf[..8]
+                            .clone_from_slice(&[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]);
+                        Ok(())
+                    });
+            }
+            _ => assert!(false, "can't switch to swd"),
+        }
+        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        assert_eq!(rsize, 10);
+        assert_eq!(
+            &rbuf[..10],
+            &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]
+        )
+    }
+
+    #[test]
+    fn test_target_select() {
+        let mut dap = TestDap::new(
+            MockSwdJtagDevice::new(),
+            FakeLEDs {},
+            StdDelayUs {},
+            None,
+            "test_dap",
+        );
+
+        // write 8 bits, read 5 bits, write 33 bits
+        let report = [0x1Du8, 3, 8, 0b10111101, 0x80 | 5, 33, 0x56, 0x83, 0xAB, 0x32, 0x01];
+        let mut rbuf = [0u8; 64];
+        dap.state.to_swd();
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_write_sequence()
+                    .once()
+                    .with(
+                        eq(8),
+                        eq([0b10111101u8]),
+                    )
+                    .return_const(Ok(()));
+                swd.expect_read_sequence()
+                    .once()
+                    .withf(|nbits, buf| buf.len() >= 1 && *nbits == 5)
+                    .returning(|_, buf| {
+                        buf[0] = 0x1F;
+                        Ok(())
+                    });
+                swd.expect_write_sequence()
+                    .once()
+                    .with(
+                        eq(33),
+                        eq([0x56, 0x83, 0xAB, 0x32, 0x01]),
+                    )
+                    .return_const(Ok(()));
+            }
+            _ => assert!(false, "can't switch to swd"),
+        }
+        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        assert_eq!(rsize, 3);
+        assert_eq!(
+            &rbuf[..3],
+            &[0x1Du8, 0x00, 0x1F]
+        )
     }
 }
