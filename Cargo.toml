@@ -27,6 +27,11 @@ mockall = "0.13.0"
 optional = true
 version = "0.3"
 
+[dependencies.log]
+optional = true
+version = "0.4"
+
 [features]
 defmt = ["dep:defmt"]
 usb-hs = []
+log = ["dep:log"]

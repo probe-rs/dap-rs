@@ -3,6 +3,9 @@
 #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
 
+// This mod MUST go first, so that the others see its macros.
+pub(crate) mod fmt;
+
 /// TODO: Dap docs
 pub mod dap;
 pub mod jtag;
