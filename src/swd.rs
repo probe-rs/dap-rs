@@ -100,10 +100,33 @@ pub enum DataPhase {
     AlwaysDataPhase = 1,
 }
 
+/// The SWD interface configuration.
+pub struct Config {
+    /// The number of idle cycles to wait after a transfer.
+    pub idle_cycles: u8,
+    /// The number of retries after a `Wait` response.
+    pub wait_retries: usize,
+    /// The number of retries if read value does not match.
+    pub match_retries: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            idle_cycles: 1,
+            wait_retries: 5,
+            match_retries: 8,
+        }
+    }
+}
+
 /// Definition of SWD communication.
 pub trait Swd<DEPS>: From<DEPS> {
     /// If SWD is available or not.
     const AVAILABLE: bool;
+
+    /// Returns a mutable reference to the SWD interface configuration.
+    fn config(&mut self) -> &mut Config;
 
     /// Helper method over `read_inner` to retry during `AckWait`.
     fn read(&mut self, wait_retries: usize, apndp: APnDP, a: DPRegister) -> Result<u32> {

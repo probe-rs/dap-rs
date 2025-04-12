@@ -24,8 +24,6 @@ pub struct Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> {
     state: State<DEPS, SWD, JTAG>,
     swo: Option<SWO>,
     swo_streaming: bool,
-    swd_wait_retries: usize,
-    match_retries: usize,
     version_string: &'a str,
     // mode: Option<DapMode>,
     leds: LEDS,
@@ -56,8 +54,6 @@ where
             state: State::new(dependencies),
             swo,
             swo_streaming: false,
-            swd_wait_retries: 5,
-            match_retries: 8,
             version_string,
             // mode: None,
             leds,
@@ -286,7 +282,8 @@ where
                 resp.write_err();
             }
             (true, _, State::Swd(swd)) => {
-                match swd.write_dp(self.swd_wait_retries, swd::DPRegister::DPIDR, word) {
+                let wait_retries = swd.config().wait_retries;
+                match swd.write_dp(wait_retries, swd::DPRegister::DPIDR, word) {
                     Ok(_) => resp.write_ok(),
                     Err(_) => resp.write_err(),
                 }
@@ -619,15 +616,23 @@ where
     }
 
     fn process_transfer_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        // We don't support variable idle cycles
-        // TODO: Should we?
-        let _idle_cycles = req.next_u8();
+        let config = match &mut self.state {
+            State::Swd(swd) => swd.config(),
+            State::None { deps, .. } => deps.swd_config(),
+            _ => {
+                resp.write_err();
+                return;
+            }
+        };
+
+        // TODO: We don't support variable idle cycles
+        config.idle_cycles = req.next_u8();
 
         // Send number of wait retries through to SWD
-        self.swd_wait_retries = req.next_u16() as usize;
+        config.wait_retries = req.next_u16() as usize;
 
         // Store number of match retries
-        self.match_retries = req.next_u16() as usize;
+        config.match_retries = req.next_u16() as usize;
 
         resp.write_ok();
     }
@@ -647,6 +652,9 @@ where
                 // Skip two bytes in resp to reserve space for final status,
                 // which we update while processing.
                 resp.write_u16(0);
+
+                let wait_retries = swd.config().wait_retries;
+                let match_retries = swd.config().match_retries;
 
                 for transfer_idx in 0..ntransfers {
                     // Store how many transfers we execute in the response
@@ -671,23 +679,16 @@ where
                             // keep issuing new AP reads, but our reads are
                             // sufficiently fast that for now this is simpler.
                             let rdbuff = swd::DPRegister::RDBUFF;
-                            if swd
-                                .read_ap(self.swd_wait_retries, a)
-                                .check(resp.mut_at(2))
-                                .is_none()
-                            {
+                            if swd.read_ap(wait_retries, a).check(resp.mut_at(2)).is_none() {
                                 break;
                             }
-                            match swd
-                                .read_dp(self.swd_wait_retries, rdbuff)
-                                .check(resp.mut_at(2))
-                            {
+                            match swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(2)) {
                                 Some(v) => v,
                                 None => break,
                             }
                         } else {
                             // Reads from DP are not posted, so directly read the register.
-                            match swd.read_dp(self.swd_wait_retries, a).check(resp.mut_at(2)) {
+                            match swd.read_dp(wait_retries, a).check(resp.mut_at(2)) {
                                 Some(v) => v,
                                 None => break,
                             }
@@ -701,12 +702,12 @@ where
                             let mut match_tries = 0;
                             while (read_value & match_mask) != target_value {
                                 match_tries += 1;
-                                if match_tries > self.match_retries {
+                                if match_tries > match_retries {
                                     break;
                                 }
 
                                 read_value = match swd
-                                    .read(self.swd_wait_retries, apndp.into(), a)
+                                    .read(wait_retries, apndp.into(), a)
                                     .check(resp.mut_at(2))
                                 {
                                     Some(v) => v,
@@ -736,7 +737,7 @@ where
                         // Otherwise issue register write
                         let write_value = req.next_u32();
                         if swd
-                            .write(self.swd_wait_retries, apndp, a, write_value)
+                            .write(wait_retries, apndp, a, write_value)
                             .check(resp.mut_at(2))
                             .is_none()
                         {
@@ -764,6 +765,8 @@ where
                 // TODO: Implement one day.
             }
             State::Swd(swd) => {
+                let wait_retries = swd.config().wait_retries;
+
                 // Skip three bytes in resp to reserve space for final status,
                 // which we update while processing.
                 resp.write_u16(0);
@@ -777,10 +780,7 @@ where
                 // If reading an AP register, post first read early.
                 if rnw == swd::RnW::R
                     && apndp == swd::APnDP::AP
-                    && swd
-                        .read_ap(self.swd_wait_retries, a)
-                        .check(resp.mut_at(3))
-                        .is_none()
+                    && swd.read_ap(wait_retries, a).check(resp.mut_at(3)).is_none()
                 {
                     // Quit early on error
                     resp.write_u16_at(1, 1);
@@ -795,23 +795,20 @@ where
                             // For AP reads, the first read was posted, so on the final
                             // read we need to read RDBUFF instead of the AP register.
                             if transfer_idx < ntransfers - 1 {
-                                match swd.read_ap(self.swd_wait_retries, a).check(resp.mut_at(3)) {
+                                match swd.read_ap(wait_retries, a).check(resp.mut_at(3)) {
                                     Some(v) => v,
                                     None => break,
                                 }
                             } else {
                                 let rdbuff = swd::DPRegister::RDBUFF.into();
-                                match swd
-                                    .read_dp(self.swd_wait_retries, rdbuff)
-                                    .check(resp.mut_at(3))
-                                {
+                                match swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(3)) {
                                     Some(v) => v,
                                     None => break,
                                 }
                             }
                         } else {
                             // For DP reads, no special care required
-                            match swd.read_dp(self.swd_wait_retries, a).check(resp.mut_at(3)) {
+                            match swd.read_dp(wait_retries, a).check(resp.mut_at(3)) {
                                 Some(v) => v,
                                 None => break,
                             }
@@ -822,7 +819,7 @@ where
                     } else {
                         // Handle repeated register writes
                         let write_value = req.next_u32();
-                        let result = swd.write(self.swd_wait_retries, apndp, a, write_value);
+                        let result = swd.write(wait_retries, apndp, a, write_value);
                         if result.check(resp.mut_at(3)).is_none() {
                             break;
                         }

@@ -9,6 +9,7 @@ pub trait SwdJtagDevice {
     fn process_swj_sequence(&mut self, data: &[u8], nbits: usize);
 
     // swd
+    fn swd_config(&mut self) -> &mut swd::Config;
     fn read_inner(&mut self, apndp: swd::APnDP, a: swd::DPRegister) -> swd::Result<u32>;
     fn write_inner(&mut self, apndp: swd::APnDP, a: swd::DPRegister, data: u32) -> swd::Result<()>;
     fn read_sequence(&mut self, num_bits: usize, data: &mut [u8]) -> swd::Result<()>;
@@ -43,6 +44,10 @@ impl swj::Dependencies<Self, Self> for MockSwdJtagDevice {
     fn jtag_config(&mut self) -> &mut jtag::Config {
         SwdJtagDevice::jtag_config(self)
     }
+
+    fn swd_config(&mut self) -> &mut swd::Config {
+        SwdJtagDevice::swd_config(self)
+    }
 }
 
 impl swd::Swd<Self> for MockSwdJtagDevice {
@@ -66,6 +71,10 @@ impl swd::Swd<Self> for MockSwdJtagDevice {
 
     fn write_sequence(&mut self, num_bits: usize, data: &[u8]) -> swd::Result<()> {
         SwdJtagDevice::write_sequence(self, num_bits, data)
+    }
+
+    fn config(&mut self) -> &mut swd::Config {
+        Self::swd_config(self)
     }
 }
 
