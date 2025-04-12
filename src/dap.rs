@@ -1,4 +1,8 @@
-use crate::{jtag, swd, swj, swo, usb};
+use crate::{
+    jtag::{self, TransferInfo, TransferResult},
+    swd::{self, APnDP, RnW},
+    swj, swo, usb,
+};
 
 mod command;
 mod request;
@@ -27,6 +31,8 @@ struct TransferConfig {
     pub wait_retries: usize,
     /// The number of retries if read value does not match.
     pub match_retries: usize,
+    /// The match set by a write transfer.
+    pub match_mask: u32,
 }
 
 /// DAP handler.
@@ -70,6 +76,7 @@ where
                 idle_cycles: 1,
                 wait_retries: 5,
                 match_retries: 8,
+                match_mask: 0,
             },
             // mode: None,
             leds,
@@ -661,117 +668,338 @@ where
         resp.write_ok();
     }
 
-    fn process_transfer(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+    fn process_transfer(&mut self, req: Request, resp: &mut ResponseWriter) {
         self.state.to_last_mode();
 
+        let config = &mut self.transfer_config;
+        match &mut self.state {
+            State::Jtag(jtag) => Self::process_transfer_jtag(config, jtag, req, resp),
+            State::Swd(swd) => Self::process_transfer_swd(config, swd, req, resp),
+            _ => return,
+        }
+    }
+
+    fn process_transfer_swd(
+        transfer_config: &mut TransferConfig,
+        swd: &mut SWD,
+        mut req: Request,
+        resp: &mut ResponseWriter,
+    ) {
         let _idx = req.next_u8();
         let ntransfers = req.next_u8();
-        let mut match_mask = 0xFFFF_FFFFu32;
 
-        match &mut self.state {
-            State::Jtag(_jtag) => {
-                // TODO: Implement one day.
-            }
-            State::Swd(swd) => {
-                // Skip two bytes in resp to reserve space for final status,
-                // which we update while processing.
-                resp.write_u16(0);
+        // Skip two bytes in resp to reserve space for final status,
+        // which we update while processing.
+        resp.write_u16(0);
 
-        let wait_retries = self.transfer_config.wait_retries;
-        let match_retries = self.transfer_config.match_retries;
+        let wait_retries = transfer_config.wait_retries;
+        let match_retries = transfer_config.match_retries;
 
-                for transfer_idx in 0..ntransfers {
-                    // Store how many transfers we execute in the response
-                    resp.write_u8_at(1, transfer_idx + 1);
+        for transfer_idx in 0..ntransfers {
+            // Store how many transfers we execute in the response
+            resp.write_u8_at(1, transfer_idx + 1);
 
-                    // Parse the next transfer request
-                    let transfer_req = req.next_u8();
-                    let apndp = swd::APnDP::try_from(transfer_req & (1 << 0)).unwrap();
-                    let rnw = swd::RnW::try_from((transfer_req & (1 << 1)) >> 1).unwrap();
-                    let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
-                    let vmatch = (transfer_req & (1 << 4)) != 0;
-                    let mmask = (transfer_req & (1 << 5)) != 0;
-                    let _ts = (transfer_req & (1 << 7)) != 0;
+            // Parse the next transfer request
+            let transfer_req = req.next_u8();
+            let apndp = swd::APnDP::try_from(transfer_req & (1 << 0)).unwrap();
+            let rnw = swd::RnW::try_from((transfer_req & (1 << 1)) >> 1).unwrap();
+            let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
+            let vmatch = (transfer_req & (1 << 4)) != 0;
+            let mmask = (transfer_req & (1 << 5)) != 0;
+            let _ts = (transfer_req & (1 << 7)) != 0;
 
-                    if rnw == swd::RnW::R {
-                        // Issue register read
-                        let mut read_value = if apndp == swd::APnDP::AP {
-                            // Reads from AP are posted, so we issue the
-                            // read and subsequently read RDBUFF for the data.
-                            // This requires an additional transfer so we'd
-                            // ideally keep track of posted reads and just
-                            // keep issuing new AP reads, but our reads are
-                            // sufficiently fast that for now this is simpler.
-                            let rdbuff = swd::DPRegister::RDBUFF;
-                            if swd.read_ap(wait_retries, a).check(resp.mut_at(2)).is_none() {
-                                break;
-                            }
-                            match swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(2)) {
-                                Some(v) => v,
-                                None => break,
-                            }
-                        } else {
-                            // Reads from DP are not posted, so directly read the register.
-                            match swd.read_dp(wait_retries, a).check(resp.mut_at(2)) {
-                                Some(v) => v,
-                                None => break,
-                            }
-                        };
+            if rnw == swd::RnW::R {
+                // Issue register read
+                let mut read_value = if apndp == swd::APnDP::AP {
+                    // Reads from AP are posted, so we issue the
+                    // read and subsequently read RDBUFF for the data.
+                    // This requires an additional transfer so we'd
+                    // ideally keep track of posted reads and just
+                    // keep issuing new AP reads, but our reads are
+                    // sufficiently fast that for now this is simpler.
+                    let rdbuff = swd::DPRegister::RDBUFF;
+                    if swd.read_ap(wait_retries, a).check(resp.mut_at(2)).is_none() {
+                        break;
+                    }
+                    match swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(2)) {
+                        Some(v) => v,
+                        None => break,
+                    }
+                } else {
+                    // Reads from DP are not posted, so directly read the register.
+                    match swd.read_dp(wait_retries, a).check(resp.mut_at(2)) {
+                        Some(v) => v,
+                        None => break,
+                    }
+                };
 
-                        // Handle value match requests by retrying if needed.
-                        // Since we're re-reading the same register the posting
-                        // is less important and we can just use the returned value.
-                        if vmatch {
-                            let target_value = req.next_u32();
-                            let mut match_tries = 0;
-                            while (read_value & match_mask) != target_value {
-                                match_tries += 1;
-                                if match_tries > match_retries {
-                                    break;
-                                }
-
-                                read_value = match swd
-                                    .read(wait_retries, apndp.into(), a)
-                                    .check(resp.mut_at(2))
-                                {
-                                    Some(v) => v,
-                                    None => break,
-                                }
-                            }
-
-                            // If we didn't read the correct value, set the value mismatch
-                            // flag in the response and quit early.
-                            if (read_value & match_mask) != target_value {
-                                resp.write_u8_at(1, resp.read_u8_at(1) | (1 << 4));
-                                break;
-                            }
-                        } else {
-                            // Save read register value
-                            resp.write_u32(read_value);
-                        }
-                    } else {
-                        // Write transfer processing
-
-                        // Writes with match_mask set just update the match mask
-                        if mmask {
-                            match_mask = req.next_u32();
-                            continue;
-                        }
-
-                        // Otherwise issue register write
-                        let write_value = req.next_u32();
-                        if swd
-                            .write(wait_retries, apndp, a, write_value)
-                            .check(resp.mut_at(2))
-                            .is_none()
-                        {
+                // Handle value match requests by retrying if needed.
+                // Since we're re-reading the same register the posting
+                // is less important and we can just use the returned value.
+                if vmatch {
+                    let target_value = req.next_u32();
+                    let mut match_tries = 0;
+                    while (read_value & transfer_config.match_mask) != target_value {
+                        match_tries += 1;
+                        if match_tries > match_retries {
                             break;
                         }
+
+                        read_value = match swd
+                            .read(wait_retries, apndp.into(), a)
+                            .check(resp.mut_at(2))
+                        {
+                            Some(v) => v,
+                            None => break,
+                        }
+                    }
+
+                    // If we didn't read the correct value, set the value mismatch
+                    // flag in the response and quit early.
+                    if (read_value & transfer_config.match_mask) != target_value {
+                        resp.write_u8_at(1, resp.read_u8_at(1) | (1 << 4));
+                        break;
+                    }
+                } else {
+                    // Save read register value
+                    resp.write_u32(read_value);
+                }
+            } else {
+                // Write transfer processing
+
+                // Writes with match_mask set just update the match mask
+                if mmask {
+                    transfer_config.match_mask = req.next_u32();
+                    continue;
+                }
+
+                // Otherwise issue register write
+                let write_value = req.next_u32();
+                if swd
+                    .write(wait_retries, apndp, a, write_value)
+                    .check(resp.mut_at(2))
+                    .is_none()
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn process_transfer_jtag(
+        transfer_config: &mut TransferConfig,
+        jtag: &mut JTAG,
+        mut req: Request,
+        resp: &mut ResponseWriter,
+    ) {
+        let idx = req.next_u8();
+        let mut ntransfers = req.next_u8();
+
+        resp.skip(2);
+
+        if !jtag.config().select_index(idx) {
+            // goto end
+            resp.write_u8_at(0, 0);
+            resp.write_u8_at(1, 0);
+            return;
+        }
+
+        const JTAG_DPACC: u32 = 0x0A;
+        const JTAG_APACC: u32 = 0x0B;
+        const DP_RDBUFF: u8 = 0x0C;
+        let read_rdbuff = TransferInfo {
+            r_nw: RnW::R,
+            ..TransferInfo::from(DP_RDBUFF)
+        };
+
+        let mut post_read = false;
+        let mut ir = 0;
+        let mut response_value;
+        let retry = transfer_config.wait_retries;
+        let mut response_count = 0;
+        let wait_retries = transfer_config.wait_retries;
+
+        loop {
+            let request_value = jtag::TransferInfo::from(req.next_u8());
+            let request_ir = if request_value.ap_ndp == APnDP::AP {
+                JTAG_APACC
+            } else {
+                JTAG_DPACC
+            };
+            if request_value.r_nw == RnW::R {
+                // Read register
+                if post_read {
+                    // Read was posted before
+                    if ir == request_ir && !request_value.match_value {
+                        // Read previous data and post next read
+
+                        response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                    } else {
+                        // Select JTAG chain
+                        if ir != JTAG_DPACC {
+                            ir = JTAG_DPACC;
+                            jtag.shift_ir(ir);
+                        }
+
+                        // Read previous data
+                        response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+                        post_read = false;
+                    }
+
+                    if let TransferResult::Ok(data) = response_value {
+                        // Store previous data
+                        resp.write_u32(data);
+                    } else {
+                        break;
+                    }
+
+                    if post_read && request_value.timestamp {
+                        resp.write_u32(0); // TODO real timestamp
+                    }
+                }
+
+                if request_value.match_value {
+                    // Read with value match
+                    let match_value = req.next_u32();
+                    let mut match_retry = transfer_config.match_retries;
+
+                    // Select JTAG chain
+                    if ir != request_ir {
+                        ir = request_ir;
+                        jtag.shift_ir(ir);
+                    }
+                    // Post DP/AP read
+                    response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                    if !matches!(response_value, TransferResult::Ok(_)) {
+                        break;
+                    }
+                    loop {
+                        response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                        match response_value {
+                            TransferResult::Ok(data)
+                                if (data & transfer_config.match_mask) != match_value => {}
+                            _ => break,
+                        }
+
+                        if match_retry == 0 {
+                            break;
+                        }
+                        match_retry -= 1;
+                    }
+
+                    if let TransferResult::Ok(data) = response_value {
+                        if (data & transfer_config.match_mask) != match_value {
+                            response_value = TransferResult::Mismatch;
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    // Normal read
+                    if !post_read {
+                        // Select JTAG chain
+                        if ir != request_ir {
+                            ir = request_ir;
+                            jtag.shift_ir(ir);
+                        }
+                        // Post DP/AP read
+                        response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                        if !matches!(response_value, TransferResult::Ok(_)) {
+                            break;
+                        }
+
+                        if request_value.timestamp {
+                            resp.write_u32(0); // TODO real timestamp
+                        }
+                        post_read = true;
+                    }
+                }
+            } else {
+                // Write register
+                if post_read {
+                    // Select JTAG chain
+                    if ir != JTAG_DPACC {
+                        ir = JTAG_DPACC;
+                        jtag.shift_ir(ir);
+                    }
+                    // Read previous data
+                    response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+
+                    if let TransferResult::Ok(data) = response_value {
+                        // Store previous data
+                        resp.write_u32(data);
+                        post_read = false;
+                    } else {
+                        break;
+                    }
+                }
+                // Load data
+                let data = req.next_u32();
+                if request_value.match_value {
+                    // Write match mask
+                    transfer_config.match_mask = data;
+                } else {
+                    // Select JTAG chain
+                    if ir != request_ir {
+                        ir = request_ir;
+                        jtag.shift_ir(ir);
+                    }
+
+                    response_value = read_with_retry(jtag, request_value, data, retry);
+                    if !matches!(response_value, TransferResult::Ok(_)) {
+                        break;
+                    }
+
+                    if request_value.timestamp {
+                        resp.write_u32(0); // TODO real timestamp
                     }
                 }
             }
-            _ => return,
+            response_count += 1;
+            ntransfers -= 1;
         }
+
+        while ntransfers > 0 {
+            ntransfers -= 1;
+            // Process canceled requests
+            let request_value = TransferInfo::from(req.next_u8());
+            if request_value.r_nw == RnW::R {
+                // Read register
+                if request_value.match_value {
+                    // Read with value match
+                    req.next_u32();
+                }
+            } else {
+                // Write register
+                req.next_u32();
+            }
+        }
+
+        if matches!(response_value, TransferResult::Ok(_)) {
+            // Select JTAG chain
+            if ir != JTAG_DPACC {
+                ir = JTAG_DPACC;
+                jtag.shift_ir(ir);
+            }
+            if post_read {
+                // Read previous data
+
+                response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+
+                if let TransferResult::Ok(data) = response_value {
+                    resp.write_u32(data);
+                } else {
+                    // goto end
+                }
+            } else {
+                // Check last write
+                response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+            }
+        }
+
+        resp.write_u8_at(0, response_count);
+        resp.write_u8_at(1, response_value.status());
     }
 
     fn process_transfer_block(&mut self, mut req: Request, resp: &mut ResponseWriter) {
@@ -900,6 +1128,24 @@ impl<T> CheckResult<T> for swd::Result<T> {
             }
         }
     }
+}
+
+fn read_with_retry<DEPS>(
+    jtag: &mut impl jtag::Jtag<DEPS>,
+    request_value: jtag::TransferInfo,
+    data: u32,
+    mut retry: usize,
+) -> jtag::TransferResult {
+    let mut response_value;
+    loop {
+        // Read register until its value matches or retry counter expires
+        response_value = jtag.transfer(request_value, data);
+        if response_value != jtag::TransferResult::Wait || retry == 0 {
+            break;
+        }
+        retry -= 1;
+    }
+    response_value
 }
 
 #[cfg(test)]
