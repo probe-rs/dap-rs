@@ -1002,9 +1002,23 @@ where
         resp.write_u8_at(1, response_value.status());
     }
 
-    fn process_transfer_block(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+    fn process_transfer_block(&mut self, req: Request, resp: &mut ResponseWriter) {
         self.state.to_last_mode();
 
+        let config = &mut self.transfer_config;
+        match &mut self.state {
+            State::Jtag(jtag) => Self::process_transfer_block_jtag(config, jtag, req, resp),
+            State::Swd(swd) => Self::process_transfer_block_swd(config, swd, req, resp),
+            _ => return,
+        }
+    }
+
+    fn process_transfer_block_swd(
+        transfer_config: &mut TransferConfig,
+        swd: &mut SWD,
+        mut req: Request,
+        resp: &mut ResponseWriter,
+    ) {
         let _idx = req.next_u8();
         let ntransfers = req.next_u16();
         let transfer_req = req.next_u8();
@@ -1012,77 +1026,168 @@ where
         let rnw = swd::RnW::try_from((transfer_req & (1 << 1)) >> 1).unwrap();
         let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
 
-        match &mut self.state {
-            State::Jtag(_jtag) => {
-                // TODO: Implement one day.
-            }
-            State::Swd(swd) => {
-                let wait_retries = self.transfer_config.wait_retries;
+        let wait_retries = transfer_config.wait_retries;
 
-                // Skip three bytes in resp to reserve space for final status,
-                // which we update while processing.
-                resp.write_u16(0);
-                resp.write_u8(0);
+        // Skip three bytes in resp to reserve space for final status,
+        // which we update while processing.
+        resp.skip(3);
 
-                // Keep track of how many transfers we executed,
-                // so if there is an error the host knows where
-                // it happened.
-                let mut transfers = 0;
+        // Keep track of how many transfers we executed,
+        // so if there is an error the host knows where
+        // it happened.
+        let mut transfers = 0;
 
-                // If reading an AP register, post first read early.
-                if rnw == swd::RnW::R
-                    && apndp == swd::APnDP::AP
-                    && swd.read_ap(wait_retries, a).check(resp.mut_at(3)).is_none()
-                {
-                    // Quit early on error
-                    resp.write_u16_at(1, 1);
-                    return;
-                }
+        // If reading an AP register, post first read early.
+        if rnw == swd::RnW::R
+            && apndp == swd::APnDP::AP
+            && swd.read_ap(wait_retries, a).check(resp.mut_at(3)).is_none()
+        {
+            // Quit early on error
+            resp.write_u16_at(1, 1);
+            return;
+        }
 
-                for transfer_idx in 0..ntransfers {
-                    transfers = transfer_idx;
-                    if rnw == swd::RnW::R {
-                        // Handle repeated reads
-                        let read_value = if apndp == swd::APnDP::AP {
-                            // For AP reads, the first read was posted, so on the final
-                            // read we need to read RDBUFF instead of the AP register.
-                            if transfer_idx < ntransfers - 1 {
-                                match swd.read_ap(wait_retries, a).check(resp.mut_at(3)) {
-                                    Some(v) => v,
-                                    None => break,
-                                }
-                            } else {
-                                let rdbuff = swd::DPRegister::RDBUFF.into();
-                                match swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(3)) {
-                                    Some(v) => v,
-                                    None => break,
-                                }
-                            }
-                        } else {
-                            // For DP reads, no special care required
-                            match swd.read_dp(wait_retries, a).check(resp.mut_at(3)) {
-                                Some(v) => v,
-                                None => break,
-                            }
-                        };
-
-                        // Save read register value to response
-                        resp.write_u32(read_value);
+        for transfer_idx in 0..ntransfers {
+            transfers = transfer_idx;
+            if rnw == swd::RnW::R {
+                // Handle repeated reads
+                let read_value = if apndp == swd::APnDP::AP {
+                    // For AP reads, the first read was posted, so on the final
+                    // read we need to read RDBUFF instead of the AP register.
+                    if transfer_idx < ntransfers - 1 {
+                        match swd.read_ap(wait_retries, a).check(resp.mut_at(3)) {
+                            Some(v) => v,
+                            None => break,
+                        }
                     } else {
-                        // Handle repeated register writes
-                        let write_value = req.next_u32();
-                        let result = swd.write(wait_retries, apndp, a, write_value);
-                        if result.check(resp.mut_at(3)).is_none() {
-                            break;
+                        let rdbuff = swd::DPRegister::RDBUFF.into();
+                        match swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(3)) {
+                            Some(v) => v,
+                            None => break,
                         }
                     }
-                }
+                } else {
+                    // For DP reads, no special care required
+                    match swd.read_dp(wait_retries, a).check(resp.mut_at(3)) {
+                        Some(v) => v,
+                        None => break,
+                    }
+                };
 
-                // Write number of transfers to response
-                resp.write_u16_at(1, transfers + 1);
+                // Save read register value to response
+                resp.write_u32(read_value);
+            } else {
+                // Handle repeated register writes
+                let write_value = req.next_u32();
+                let result = swd.write(wait_retries, apndp, a, write_value);
+                if result.check(resp.mut_at(3)).is_none() {
+                    break;
+                }
             }
-            _ => return,
         }
+
+        // Write number of transfers to response
+        resp.write_u16_at(1, transfers + 1);
+    }
+
+    fn process_transfer_block_jtag(
+        transfer_config: &mut TransferConfig,
+        jtag: &mut JTAG,
+        mut req: Request,
+        resp: &mut ResponseWriter,
+    ) {
+        const JTAG_DPACC: u32 = 0x0A;
+        const JTAG_APACC: u32 = 0x0B;
+        const DP_RDBUFF: u8 = 0x0C;
+        let read_rdbuff = TransferInfo {
+            r_nw: RnW::R,
+            ..TransferInfo::from(DP_RDBUFF)
+        };
+        let retry = transfer_config.wait_retries;
+
+        let idx = req.next_u8();
+        let mut request_count = req.next_u16();
+        let mut request_value = TransferInfo::from(req.next_u8());
+
+        let mut response_count = 0;
+        resp.skip(3);
+
+        // Device index (JTAP TAP)
+        if !jtag.config().select_index(idx) {
+            // goto end
+            resp.write_u16_at(0, response_count);
+            resp.write_u8_at(2, 0);
+            return;
+        }
+
+        if request_count == 0 {
+            // goto end
+            resp.write_u16_at(0, response_count);
+            resp.write_u8_at(2, 0);
+            return;
+        }
+
+        // Select JTAG chain
+        let ir = if request_value.ap_ndp == APnDP::AP {
+            JTAG_APACC
+        } else {
+            JTAG_DPACC
+        };
+        jtag.shift_ir(ir);
+
+        let mut response_value = jtag::TransferResult::Nack;
+        if request_value.r_nw == RnW::R {
+            // Post read
+            response_value = read_with_retry(jtag, request_value, 0, retry);
+            if matches!(response_value, TransferResult::Ok(_)) {
+                // Read register block
+                while request_count > 0 {
+                    request_count -= 1;
+                    // Read DP/AP register
+                    if request_count == 0 {
+                        // Last read
+                        if ir != JTAG_DPACC {
+                            jtag.shift_ir(JTAG_DPACC);
+                        }
+                        request_value = read_rdbuff;
+                    }
+                    read_with_retry(jtag, request_value, 0, retry);
+                    if let TransferResult::Ok(data) = response_value {
+                        // Store data
+                        resp.write_u32(data);
+                        response_count += 1;
+                    } else {
+                        // goto end
+                        break;
+                    }
+                }
+            }
+        } else {
+            // Write register block
+            while request_count > 0 {
+                request_count -= 1;
+                // Load data
+                let data = req.next_u32();
+                // Write DP/AP register
+                response_value = read_with_retry(jtag, request_value, data, retry);
+                if !matches!(response_value, TransferResult::Ok(_)) {
+                    // goto end
+                    break;
+                }
+                response_count += 1;
+
+                if request_count == 0 {
+                    // Check last write
+                    if ir != JTAG_DPACC {
+                        jtag.shift_ir(JTAG_DPACC);
+                    }
+                    response_value = read_with_retry(jtag, read_rdbuff, 0, retry);
+                }
+            }
+        }
+
+        resp.write_u16_at(0, response_count);
+        resp.write_u8_at(2, response_value.status());
     }
 
     fn process_transfer_abort(&mut self) {
