@@ -19,12 +19,23 @@ pub trait DapLeds {
     fn react_to_host_status(&mut self, host_status: HostStatus);
 }
 
+/// The SWD interface configuration.
+struct TransferConfig {
+    /// The number of idle cycles to wait after a transfer.
+    pub idle_cycles: u8,
+    /// The number of retries after a `Wait` response.
+    pub wait_retries: usize,
+    /// The number of retries if read value does not match.
+    pub match_retries: usize,
+}
+
 /// DAP handler.
 pub struct Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> {
     state: State<DEPS, SWD, JTAG>,
     swo: Option<SWO>,
     swo_streaming: bool,
     version_string: &'a str,
+    transfer_config: TransferConfig,
     // mode: Option<DapMode>,
     leds: LEDS,
     wait: WAIT,
@@ -55,6 +66,11 @@ where
             swo,
             swo_streaming: false,
             version_string,
+            transfer_config: TransferConfig {
+                idle_cycles: 1,
+                wait_retries: 5,
+                match_retries: 8,
+            },
             // mode: None,
             leds,
             wait,
@@ -276,13 +292,21 @@ where
         let idx = req.next_u8();
         let word = req.next_u32();
         match (SWD::AVAILABLE, JTAG::AVAILABLE, &mut self.state) {
-            (_, true, State::Jtag(_jtag)) => {
-                // TODO: Implement one day.
-                let _ = idx;
-                resp.write_err();
+            (_, true, State::Jtag(jtag)) => {
+                let config = jtag.config();
+                if !config.select_index(idx) {
+                    resp.write_err();
+                    return;
+                }
+
+                const JTAG_ABORT: u32 = 0x08;
+                jtag.shift_ir(JTAG_ABORT);
+                jtag.write_abort(word);
+
+                resp.write_ok();
             }
             (true, _, State::Swd(swd)) => {
-                let wait_retries = swd.config().wait_retries;
+                let wait_retries = self.transfer_config.wait_retries;
                 match swd.write_dp(wait_retries, swd::DPRegister::DPIDR, word) {
                     Ok(_) => resp.write_ok(),
                     Err(_) => resp.write_err(),
@@ -360,6 +384,15 @@ where
     }
 
     fn process_swd_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+        let _config = match &mut self.state {
+            State::Swd(swd) => swd.config(),
+            State::None { deps, .. } => deps.swd_config(),
+            _ => {
+                resp.write_err();
+                return;
+            }
+        };
+
         // TODO: Do we want to support other configs?
         let config = req.next_u8();
         let clk_period = config & 0b011;
@@ -562,7 +595,7 @@ where
     }
 
     fn process_jtag_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        let state = match &mut self.state {
+        let config = match &mut self.state {
             State::Jtag(jtag) => jtag.config(),
             State::None { deps, .. } => deps.jtag_config(),
             _ => {
@@ -573,18 +606,18 @@ where
 
         let count = req.next_u8();
 
-        state.device_count = count;
+        config.device_count = count;
 
         let mut bits = 0;
         for n in 0..count as usize {
             let length = req.next_u8();
-            state.ir_length[n] = length;
-            state.ir_before[n] = bits;
+            config.ir_length[n] = length;
+            config.ir_before[n] = bits;
             bits += length as u16;
         }
         for n in 0..count as usize {
-            bits -= state.ir_length[n as usize] as u16;
-            state.ir_after[n] = bits;
+            bits -= config.ir_length[n as usize] as u16;
+            config.ir_after[n] = bits;
         }
 
         resp.write_ok();
@@ -616,23 +649,14 @@ where
     }
 
     fn process_transfer_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        let config = match &mut self.state {
-            State::Swd(swd) => swd.config(),
-            State::None { deps, .. } => deps.swd_config(),
-            _ => {
-                resp.write_err();
-                return;
-            }
-        };
-
         // TODO: We don't support variable idle cycles
-        config.idle_cycles = req.next_u8();
+        self.transfer_config.idle_cycles = req.next_u8();
 
         // Send number of wait retries through to SWD
-        config.wait_retries = req.next_u16() as usize;
+        self.transfer_config.wait_retries = req.next_u16() as usize;
 
         // Store number of match retries
-        config.match_retries = req.next_u16() as usize;
+        self.transfer_config.match_retries = req.next_u16() as usize;
 
         resp.write_ok();
     }
@@ -653,8 +677,8 @@ where
                 // which we update while processing.
                 resp.write_u16(0);
 
-                let wait_retries = swd.config().wait_retries;
-                let match_retries = swd.config().match_retries;
+        let wait_retries = self.transfer_config.wait_retries;
+        let match_retries = self.transfer_config.match_retries;
 
                 for transfer_idx in 0..ntransfers {
                     // Store how many transfers we execute in the response
@@ -765,7 +789,7 @@ where
                 // TODO: Implement one day.
             }
             State::Swd(swd) => {
-                let wait_retries = swd.config().wait_retries;
+                let wait_retries = self.transfer_config.wait_retries;
 
                 // Skip three bytes in resp to reserve space for final status,
                 // which we update while processing.

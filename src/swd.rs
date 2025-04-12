@@ -101,22 +101,11 @@ pub enum DataPhase {
 }
 
 /// The SWD interface configuration.
-pub struct Config {
-    /// The number of idle cycles to wait after a transfer.
-    pub idle_cycles: u8,
-    /// The number of retries after a `Wait` response.
-    pub wait_retries: usize,
-    /// The number of retries if read value does not match.
-    pub match_retries: usize,
-}
+pub struct Config {}
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            idle_cycles: 1,
-            wait_retries: 5,
-            match_retries: 8,
-        }
+        Self {}
     }
 }
 
