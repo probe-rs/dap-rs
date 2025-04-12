@@ -1,4 +1,4 @@
-use crate::{    jtag,     swd, swj, swo, usb};
+use crate::{jtag, swd, swj, swo, usb};
 
 mod command;
 mod request;
@@ -564,12 +564,58 @@ where
         jtag.sequences(req, resp);
     }
 
-    fn process_jtag_configure(&self, _req: Request, _resp: &mut ResponseWriter) {
-        // TODO: Implement one day (needs proper JTAG support)
+    fn process_jtag_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+        let state = match &mut self.state {
+            State::Jtag(jtag) => jtag.config(),
+            State::None { deps, .. } => deps.jtag_config(),
+            _ => {
+                resp.write_err();
+                return;
+            }
+        };
+
+        let count = req.next_u8();
+
+        state.device_count = count;
+
+        let mut bits = 0;
+        for n in 0..count as usize {
+            let length = req.next_u8();
+            state.ir_length[n] = length;
+            state.ir_before[n] = bits;
+            bits += length as u16;
+        }
+        for n in 0..count as usize {
+            bits -= state.ir_length[n as usize] as u16;
+            state.ir_after[n] = bits;
+        }
+
+        resp.write_ok();
     }
 
-    fn process_jtag_idcode(&self, _req: Request, _resp: &mut ResponseWriter) {
-        // TODO: Implement one day (needs proper JTAG support)
+    fn process_jtag_idcode(&mut self, mut req: Request, resp: &mut ResponseWriter) {
+        self.state.to_jtag();
+
+        let jtag = match &mut self.state {
+            State::Jtag(jtag) => jtag,
+            _ => {
+                resp.write_err();
+                return;
+            }
+        };
+
+        if !jtag.config().select_index(req.next_u8()) {
+            resp.write_err();
+            return;
+        }
+
+        const JTAG_IDCODE: u32 = 0x0E;
+
+        jtag.shift_ir(JTAG_IDCODE);
+        let data = jtag.shift_dr(0);
+
+        resp.write_ok();
+        resp.write_u32(data);
     }
 
     fn process_transfer_configure(&mut self, mut req: Request, resp: &mut ResponseWriter) {
