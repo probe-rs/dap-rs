@@ -1,4 +1,4 @@
-use crate::{jtag, swd, swj, swo, usb};
+use crate::{    jtag,     swd, swj, swo, usb};
 
 mod command;
 mod request;
@@ -396,7 +396,7 @@ where
                     // Other integers are normal.
                     n => n as usize,
                 };
-                let nbytes = (nbits + 7) / 8;
+                let nbytes = nbits.div_ceil(8);
                 let output = (sequence_info & 0x80) == 0;
 
                 if output {
@@ -550,16 +550,18 @@ where
     fn process_jtag_sequence(&mut self, req: Request, resp: &mut ResponseWriter) {
         self.state.to_jtag();
 
-        match &mut self.state {
-            State::Jtag(jtag) => {
-                // Run requested JTAG sequences. Cannot fail.
-                let size = jtag.sequences(req.rest(), resp.remaining());
-                resp.skip(size as _);
-
-                resp.write_ok();
+        let jtag = match &mut self.state {
+            State::Jtag(jtag) => jtag,
+            _ => {
+                resp.write_err();
+                return;
             }
-            _ => resp.write_err(),
         };
+
+        // Allways succeeds
+        resp.write_ok();
+
+        jtag.sequences(req, resp);
     }
 
     fn process_jtag_configure(&self, _req: Request, _resp: &mut ResponseWriter) {

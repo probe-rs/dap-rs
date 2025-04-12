@@ -15,7 +15,7 @@ pub trait SwdJtagDevice {
     fn write_sequence(&mut self, num_bits: usize, data: &[u8]) -> swd::Result<()>;
 
     // jtag
-    fn sequences(&mut self, data: &[u8], rxbuf: &mut [u8]) -> u32;
+    fn sequence(&mut self, info: jtag::SequenceInfo, tdi: &[u8], resp: &mut [u8]);
 
     // swd/jtag
     fn set_clock(&mut self, max_frequency: u32) -> bool;
@@ -70,7 +70,7 @@ impl jtag::Jtag<MockSwdJtagDevice> for MockSwdJtagDevice {
         SwdJtagDevice::set_clock(self, max_frequency)
     }
 
-    fn sequences(&mut self, data: &[u8], rxbuf: &mut [u8]) -> u32 {
-        SwdJtagDevice::sequences(self, data, rxbuf)
+    fn sequence(&mut self, info: jtag::SequenceInfo, tdi: &[u8], resp: &mut [u8]) {
+        SwdJtagDevice::sequence(self, info, tdi, resp)
     }
 }
