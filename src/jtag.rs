@@ -140,8 +140,10 @@ impl Config {
     /// selected device.
     pub fn select_index(&mut self, index: u8) -> bool {
         if index >= self.device_count {
+            warn!("Invalid JTAG TAP index: {}", index);
             return false;
         }
+        info!("Selecting JTAG TAP #{}", index);
         self.index = index;
         true
     }

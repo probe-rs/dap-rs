@@ -627,6 +627,13 @@ where
         for n in 0..count as usize {
             bits -= config.scan_chain[n].ir_length as u16;
             config.scan_chain[n].ir_after = bits;
+            debug!(
+                "JTAG TAP #{}: before: {}, length: {}, after: {}",
+                n,
+                config.scan_chain[n].ir_before,
+                config.scan_chain[n].ir_length,
+                config.scan_chain[n].ir_after
+            );
         }
 
         resp.write_ok();
@@ -1249,6 +1256,7 @@ fn transfer_with_retry<DEPS>(
         // Read register until its value matches or retry counter expires
         response_value = jtag.transfer(request_value, data);
         if response_value != jtag::TransferResult::Wait || retry == 0 {
+            debug!("Transfer result: {:?}", response_value);
             break;
         }
         retry -= 1;
@@ -1404,7 +1412,9 @@ mod test {
         assert_eq!(rsize, 10);
         assert_eq!(
             &rbuf[..10],
-            &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]
+            &[
+                0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00
+            ]
         )
     }
 
