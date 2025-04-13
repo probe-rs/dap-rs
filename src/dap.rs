@@ -801,8 +801,8 @@ where
 
         if !jtag.config().select_index(idx) {
             // goto end
-            resp.write_u8_at(0, 0);
             resp.write_u8_at(1, 0);
+            resp.write_u8_at(2, 0);
             return;
         }
 
@@ -1000,8 +1000,8 @@ where
             }
         }
 
-        resp.write_u8_at(0, response_count);
-        resp.write_u8_at(1, response_value.status());
+        resp.write_u8_at(1, response_count);
+        resp.write_u8_at(2, response_value.status());
     }
 
     fn process_transfer_block(&mut self, req: Request, resp: &mut ResponseWriter) {
@@ -1117,15 +1117,15 @@ where
         // Device index (JTAP TAP)
         if !jtag.config().select_index(idx) {
             // goto end
-            resp.write_u16_at(0, response_count);
-            resp.write_u8_at(2, 0);
+            resp.write_u16_at(1, response_count);
+            resp.write_u8_at(3, 0);
             return;
         }
 
         if request_count == 0 {
             // goto end
-            resp.write_u16_at(0, response_count);
-            resp.write_u8_at(2, 0);
+            resp.write_u16_at(1, response_count);
+            resp.write_u8_at(3, 0);
             return;
         }
 
@@ -1188,8 +1188,8 @@ where
             }
         }
 
-        resp.write_u16_at(0, response_count);
-        resp.write_u8_at(2, response_value.status());
+        resp.write_u16_at(1, response_count);
+        resp.write_u8_at(3, response_value.status());
     }
 
     fn process_transfer_abort(&mut self) {
@@ -1403,9 +1403,7 @@ mod test {
         assert_eq!(rsize, 10);
         assert_eq!(
             &rbuf[..10],
-            &[
-                0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00
-            ]
+            &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]
         )
     }
 
