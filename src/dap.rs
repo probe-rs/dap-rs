@@ -816,12 +816,12 @@ where
 
         let mut post_read = false;
         let mut ir = 0;
-        let mut response_value;
+        let mut response_value = TransferResult::Nack;
         let retry = transfer_config.wait_retries;
         let mut response_count = 0;
         let wait_retries = transfer_config.wait_retries;
 
-        loop {
+        while ntransfers > 0 {
             let request_value = jtag::TransferInfo::from(req.next_u8());
             ntransfers -= 1;
             let request_ir = if request_value.ap_ndp == APnDP::AP {
@@ -942,6 +942,7 @@ where
                 if request_value.match_value {
                     // Write match mask
                     transfer_config.match_mask = data;
+                    response_value = TransferResult::Ok(0);
                 } else {
                     // Select JTAG chain
                     if ir != request_ir {

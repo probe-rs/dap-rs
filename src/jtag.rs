@@ -417,6 +417,7 @@ fn bypass_bits<DEPS>(jtag: &mut impl Jtag<DEPS>, mut bypass: u16, tms: bool) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TransferResult {
     Ok(u32),
     Wait,
