@@ -164,7 +164,7 @@ pub trait Jtag<DEPS>: From<DEPS> {
         for _ in 0..sequence_count {
             let sequence_info = SequenceInfo::from(req.next_u8());
             let n_bytes = sequence_info.n_bits.div_ceil(8) as usize;
-            self.sequence(sequence_info, req.data, resp.remaining());
+            self.sequence(sequence_info, &req.data[..n_bytes], resp.remaining());
 
             req.consume(n_bytes);
             if sequence_info.capture {
