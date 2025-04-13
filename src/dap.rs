@@ -823,6 +823,7 @@ where
 
         loop {
             let request_value = jtag::TransferInfo::from(req.next_u8());
+            ntransfers -= 1;
             let request_ir = if request_value.ap_ndp == APnDP::AP {
                 JTAG_APACC
             } else {
@@ -959,7 +960,6 @@ where
                 }
             }
             response_count += 1;
-            ntransfers -= 1;
         }
 
         while ntransfers > 0 {
@@ -1403,7 +1403,9 @@ mod test {
         assert_eq!(rsize, 10);
         assert_eq!(
             &rbuf[..10],
-            &[0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00]
+            &[
+                0x1Du8, 0x00, 0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00
+            ]
         )
     }
 
