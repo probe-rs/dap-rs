@@ -5,6 +5,7 @@ use crate::{
 
 /// Describes a JTAG sequence request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SequenceInfo {
     /// The number of bits to shift in/out.
     pub n_bits: u8,
@@ -39,6 +40,7 @@ impl From<u8> for SequenceInfo {
 
 /// Describes a JTAG sequence request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TransferInfo {
     pub ap_ndp: APnDP,
     pub r_nw: RnW,
@@ -78,6 +80,7 @@ impl From<u8> for TransferInfo {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TapConfig {
     /// The number of bits in the IR register.
     pub ir_length: u8,
@@ -97,6 +100,7 @@ impl TapConfig {
 }
 
 /// JTAG interface configuraiton.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     /// The number of devices on the JTAG chain.
     pub device_count: u8,
