@@ -836,7 +836,7 @@ where
                     if ir == request_ir && !request_value.match_value {
                         // Read previous data and post next read
 
-                        response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                        response_value = transfer_with_retry(jtag, request_value, 0, wait_retries);
                     } else {
                         // Select JTAG chain
                         if ir != JTAG_DPACC {
@@ -845,7 +845,7 @@ where
                         }
 
                         // Read previous data
-                        response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+                        response_value = transfer_with_retry(jtag, read_rdbuff, 0, wait_retries);
                         post_read = false;
                     }
 
@@ -872,12 +872,12 @@ where
                         jtag.shift_ir(ir);
                     }
                     // Post DP/AP read
-                    response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                    response_value = transfer_with_retry(jtag, request_value, 0, wait_retries);
                     if !matches!(response_value, TransferResult::Ok(_)) {
                         break;
                     }
                     loop {
-                        response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                        response_value = transfer_with_retry(jtag, request_value, 0, wait_retries);
                         match response_value {
                             TransferResult::Ok(data)
                                 if (data & transfer_config.match_mask) != match_value => {}
@@ -907,7 +907,7 @@ where
                             jtag.shift_ir(ir);
                         }
                         // Post DP/AP read
-                        response_value = read_with_retry(jtag, request_value, 0, wait_retries);
+                        response_value = transfer_with_retry(jtag, request_value, 0, wait_retries);
                         if !matches!(response_value, TransferResult::Ok(_)) {
                             break;
                         }
@@ -927,7 +927,7 @@ where
                         jtag.shift_ir(ir);
                     }
                     // Read previous data
-                    response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+                    response_value = transfer_with_retry(jtag, read_rdbuff, 0, wait_retries);
 
                     if let TransferResult::Ok(data) = response_value {
                         // Store previous data
@@ -950,7 +950,7 @@ where
                         jtag.shift_ir(ir);
                     }
 
-                    response_value = read_with_retry(jtag, request_value, data, retry);
+                    response_value = transfer_with_retry(jtag, request_value, data, retry);
                     if !matches!(response_value, TransferResult::Ok(_)) {
                         break;
                     }
@@ -988,7 +988,7 @@ where
             if post_read {
                 // Read previous data
 
-                response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+                response_value = transfer_with_retry(jtag, read_rdbuff, 0, wait_retries);
 
                 if let TransferResult::Ok(data) = response_value {
                     resp.write_u32(data);
@@ -997,7 +997,7 @@ where
                 }
             } else {
                 // Check last write
-                response_value = read_with_retry(jtag, read_rdbuff, 0, wait_retries);
+                response_value = transfer_with_retry(jtag, read_rdbuff, 0, wait_retries);
             }
         }
 
@@ -1141,7 +1141,7 @@ where
         let mut response_value = jtag::TransferResult::Nack;
         if request_value.r_nw == RnW::R {
             // Post read
-            response_value = read_with_retry(jtag, request_value, 0, retry);
+            response_value = transfer_with_retry(jtag, request_value, 0, retry);
             if matches!(response_value, TransferResult::Ok(_)) {
                 // Read register block
                 while request_count > 0 {
@@ -1154,7 +1154,7 @@ where
                         }
                         request_value = read_rdbuff;
                     }
-                    read_with_retry(jtag, request_value, 0, retry);
+                    transfer_with_retry(jtag, request_value, 0, retry);
                     if let TransferResult::Ok(data) = response_value {
                         // Store data
                         resp.write_u32(data);
@@ -1172,7 +1172,7 @@ where
                 // Load data
                 let data = req.next_u32();
                 // Write DP/AP register
-                response_value = read_with_retry(jtag, request_value, data, retry);
+                response_value = transfer_with_retry(jtag, request_value, data, retry);
                 if !matches!(response_value, TransferResult::Ok(_)) {
                     // goto end
                     break;
@@ -1184,7 +1184,7 @@ where
                     if ir != JTAG_DPACC {
                         jtag.shift_ir(JTAG_DPACC);
                     }
-                    response_value = read_with_retry(jtag, read_rdbuff, 0, retry);
+                    response_value = transfer_with_retry(jtag, read_rdbuff, 0, retry);
                 }
             }
         }
@@ -1238,7 +1238,7 @@ impl<T> CheckResult<T> for swd::Result<T> {
     }
 }
 
-fn read_with_retry<DEPS>(
+fn transfer_with_retry<DEPS>(
     jtag: &mut impl jtag::Jtag<DEPS>,
     request_value: jtag::TransferInfo,
     data: u32,
