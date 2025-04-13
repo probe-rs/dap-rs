@@ -1,3 +1,5 @@
+// This file has been copied from https://github.com/embassy-rs/embassy/blob/659c616f9f13aa6f157eaef5279f09805449b5be/embassy-executor/src/fmt.rs
+
 #![macro_use]
 #![allow(unused)]
 
