@@ -214,8 +214,7 @@ pub trait Jtag<DEPS>: From<DEPS> {
         // All bits except last with TMS = 0
         let mut ir_bits = ir_length;
         while ir_bits > 1 {
-            let bits = ir_bits.min(8);
-
+            let bits = (ir_bits - 1).min(8);
             self.sequence(
                 SequenceInfo {
                     n_bits: bits,
@@ -354,7 +353,7 @@ fn shift_dr<DEPS>(jtag: &mut impl Jtag<DEPS>, data: u32, bypass_after: u16) -> u
     let mut captured_dr = 0;
     let mut dr_bits = 32;
     while dr_bits > 1 {
-        let bits = dr_bits.min(8);
+        let bits = (dr_bits - 1).min(8);
 
         let mut captured_byte = 0;
         jtag.sequence(
