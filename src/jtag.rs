@@ -77,7 +77,24 @@ impl From<u8> for TransferInfo {
     }
 }
 
-const MAX_CHAIN_LENGTH: usize = 16;
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TapConfig {
+    /// The number of bits in the IR register.
+    pub ir_length: u8,
+    /// The number of bypass bits before the IR register.
+    pub ir_before: u16,
+    /// The number of bypass bits after the IR register.
+    pub ir_after: u16,
+}
+
+impl TapConfig {
+    /// Empty value for array initialization
+    pub const INIT: Self = Self {
+        ir_length: 0,
+        ir_before: 0,
+        ir_after: 0,
+    };
+}
 
 /// JTAG interface configuraiton.
 pub struct Config {
@@ -85,12 +102,31 @@ pub struct Config {
     pub device_count: u8,
     /// The position of the selected device.
     pub index: u8,
-    /// The length of the IR register for each device.
-    pub ir_length: [u8; MAX_CHAIN_LENGTH],
-    /// The number of bypass bits before the IR register for each device.
-    pub ir_before: [u16; MAX_CHAIN_LENGTH],
-    /// The number of bypass bits after the IR register for each device.
-    pub ir_after: [u16; MAX_CHAIN_LENGTH],
+    /// TAPs on the scan chain.
+    pub scan_chain: &'static mut [TapConfig],
+}
+
+impl Config {
+    pub fn new(chain_buffer: &'static mut [TapConfig]) -> Self {
+        Self {
+            device_count: 0,
+            index: 0,
+            scan_chain: chain_buffer,
+        }
+    }
+
+    /// Returns information about the currently selected TAP.
+    pub fn current_tap(&self) -> TapConfig {
+        self.scan_chain[self.index as usize]
+    }
+
+    pub(crate) fn update_device_count(&mut self, count: u8) -> bool {
+        if count as usize >= self.scan_chain.len() {
+            return false;
+        }
+        self.device_count = count;
+        true
+    }
 }
 
 impl Config {
@@ -158,10 +194,10 @@ pub trait Jtag<DEPS>: From<DEPS> {
         const EXIT1_IR_TO_IDLE: &[bool] = &[true, false];
         self.tms_sequence(IDLE_TO_SHIFT_IR);
 
-        let device_index = self.config().index as usize;
-        let ir_length = self.config().ir_length[device_index];
-        let bypass_before = self.config().ir_before[device_index];
-        let bypass_after = self.config().ir_after[device_index];
+        let tap = self.config().current_tap();
+        let ir_length = tap.ir_length;
+        let bypass_before = tap.ir_before;
+        let bypass_after = tap.ir_after;
 
         // Send the bypass bits before the IR.
         bypass_bits(self, bypass_before, false);
@@ -344,7 +380,7 @@ fn shift_dr<DEPS>(jtag: &mut impl Jtag<DEPS>, data: u32, bypass_after: u16) -> u
     );
 
     captured_dr >>= 1;
-    captured_dr |= (captured_byte << 31) as u32;
+    captured_dr |= (captured_byte as u32) << 31;
 
     if bypass_after > 0 {
         if bypass_after > 1 {

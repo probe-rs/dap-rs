@@ -612,19 +612,21 @@ where
         };
 
         let count = req.next_u8();
-
-        config.device_count = count;
+        if !config.update_device_count(count) {
+            resp.write_err();
+            return;
+        }
 
         let mut bits = 0;
         for n in 0..count as usize {
             let length = req.next_u8();
-            config.ir_length[n] = length;
-            config.ir_before[n] = bits;
+            config.scan_chain[n].ir_length = length;
+            config.scan_chain[n].ir_before = bits;
             bits += length as u16;
         }
         for n in 0..count as usize {
-            bits -= config.ir_length[n as usize] as u16;
-            config.ir_after[n] = bits;
+            bits -= config.scan_chain[n].ir_length as u16;
+            config.scan_chain[n].ir_after = bits;
         }
 
         resp.write_ok();
