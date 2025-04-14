@@ -302,7 +302,7 @@ pub trait Jtag<DEPS>: From<DEPS> {
                 capture: true,
                 tms: false,
             },
-            &[req.a2a3 << 1 | req.r_nw as u8],
+            &[(req.a2a3 << 1) | req.r_nw as u8],
             core::slice::from_mut(&mut ack),
         );
 
