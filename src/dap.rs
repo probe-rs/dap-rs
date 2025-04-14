@@ -1141,7 +1141,8 @@ where
         let retry = transfer_config.wait_retries;
 
         let idx = req.next_u8();
-        let mut request_count = req.next_u16();
+        let request_count = req.next_u16();
+        let mut nrequests = request_count;
         let mut request_value = TransferInfo::from(req.next_u8());
 
         let mut response_count = 0;
@@ -1155,7 +1156,7 @@ where
             return;
         }
 
-        if request_count == 0 {
+        if nrequests == 0 {
             // goto end
             resp.write_u16_at(1, response_count);
             resp.write_u8_at(3, 0);
@@ -1173,20 +1174,23 @@ where
         let mut response_value = jtag::TransferResult::Nack;
         if request_value.r_nw == RnW::R {
             // Post read
+            debug!("Posting read for {} transfers", request_count);
             response_value = transfer_with_retry(jtag, request_value, transfer_config, 0, retry);
             if matches!(response_value, TransferResult::Ok(_)) {
                 // Read register block
-                while request_count > 0 {
-                    request_count -= 1;
+                while nrequests > 0 {
+                    debug!("Reading {}/{}", response_count + 1, request_count);
+                    nrequests -= 1;
                     // Read DP/AP register
-                    if request_count == 0 {
+                    if nrequests == 0 {
                         // Last read
                         if ir != JTAG_DPACC {
                             jtag.shift_ir(JTAG_DPACC);
                         }
                         request_value = read_rdbuff;
                     }
-                    transfer_with_retry(jtag, request_value, transfer_config, 0, retry);
+                    response_value =
+                        transfer_with_retry(jtag, request_value, transfer_config, 0, retry);
                     if let TransferResult::Ok(data) = response_value {
                         // Store data
                         resp.write_u32(data);
@@ -1199,8 +1203,9 @@ where
             }
         } else {
             // Write register block
-            while request_count > 0 {
-                request_count -= 1;
+            while nrequests > 0 {
+                debug!("Writing {}/{}", response_count + 1, request_count);
+                nrequests -= 1;
                 // Load data
                 let data = req.next_u32();
                 // Write DP/AP register
