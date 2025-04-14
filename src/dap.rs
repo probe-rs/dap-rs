@@ -1286,9 +1286,14 @@ fn transfer_with_retry<DEPS>(
     let mut response_value;
     loop {
         // Read register until its value matches or retry counter expires
+        if request_value.r_nw == RnW::W {
+            debug!("Transfer: {:?} ({:x})", request_value, data);
+        } else {
+            debug!("Transfer: {:?}", request_value);
+        }
         response_value = jtag.transfer(request_value, transfer_config, data);
         if response_value != jtag::TransferResult::Wait || retry == 0 {
-            debug!("Transfer result: {:?}", response_value);
+            debug!("Transfer result: {:x}", response_value);
             break;
         }
         retry -= 1;
