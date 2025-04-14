@@ -802,7 +802,8 @@ where
         resp: &mut ResponseWriter,
     ) {
         let idx = req.next_u8();
-        let mut ntransfers = req.next_u8();
+        let transfer_count = req.next_u8();
+        let mut ntransfers = transfer_count;
 
         resp.skip(2);
 
@@ -829,6 +830,7 @@ where
         let wait_retries = transfer_config.wait_retries;
 
         while ntransfers > 0 {
+            debug!("JTAG transfer {}/{}", response_count + 1, transfer_count);
             let request_value = jtag::TransferInfo::from(req.next_u8());
             ntransfers -= 1;
             let request_ir = if request_value.ap_ndp == APnDP::AP {
@@ -1016,24 +1018,18 @@ where
         if matches!(response_value, TransferResult::Ok(_)) {
             // Select JTAG chain
             if ir != JTAG_DPACC {
-                ir = JTAG_DPACC;
                 jtag.shift_ir(ir);
             }
+
+            // Check last write, or read previous read's result.
+            response_value =
+                transfer_with_retry(jtag, read_rdbuff, transfer_config, 0, wait_retries);
+
             if post_read {
                 // Read previous data
-
-                response_value =
-                    transfer_with_retry(jtag, read_rdbuff, transfer_config, 0, wait_retries);
-
                 if let TransferResult::Ok(data) = response_value {
                     resp.write_u32(data);
-                } else {
-                    // goto end
                 }
-            } else {
-                // Check last write
-                response_value =
-                    transfer_with_retry(jtag, read_rdbuff, transfer_config, 0, wait_retries);
             }
         }
 
@@ -1284,13 +1280,15 @@ fn transfer_with_retry<DEPS>(
     mut retry: usize,
 ) -> jtag::TransferResult {
     let mut response_value;
+
+    if request_value.r_nw == RnW::W {
+        debug!("Transfer: {:?} ({:x})", request_value, data);
+    } else {
+        debug!("Transfer: {:?}", request_value);
+    }
+
     loop {
-        // Read register until its value matches or retry counter expires
-        if request_value.r_nw == RnW::W {
-            debug!("Transfer: {:?} ({:x})", request_value, data);
-        } else {
-            debug!("Transfer: {:?}", request_value);
-        }
+        // Read register until retry counter expires or the read returns !Wait
         response_value = jtag.transfer(request_value, transfer_config, data);
         if response_value != jtag::TransferResult::Wait || retry == 0 {
             debug!("Transfer result: {:x}", response_value);

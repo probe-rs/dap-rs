@@ -1,6 +1,6 @@
 use crate::{
     dap::{self, TransferConfig},
-    swd::{APnDP, RnW},
+    swd::{APnDP, DPRegister, RnW},
 };
 
 /// Describes a JTAG sequence request.
@@ -44,7 +44,7 @@ impl From<u8> for SequenceInfo {
 pub struct TransferInfo {
     pub ap_ndp: APnDP,
     pub r_nw: RnW,
-    pub a2a3: u8,
+    pub a2a3: DPRegister,
     pub match_value: bool,
     pub match_mask: bool,
     pub timestamp: bool,
@@ -71,7 +71,7 @@ impl From<u8> for TransferInfo {
             } else {
                 RnW::W
             },
-            a2a3: (byte & (DAP_TRANSFER_A2 | DAP_TRANSFER_A3)) >> 2,
+            a2a3: DPRegister::try_from((byte & (DAP_TRANSFER_A2 | DAP_TRANSFER_A3)) >> 2).unwrap(),
             match_value: byte & DAP_TRANSFER_MATCH_VALUE != 0,
             match_mask: byte & DAP_TRANSFER_MATCH_MASK != 0,
             timestamp: byte & DAP_TRANSFER_TIMESTAMP != 0,
@@ -302,7 +302,7 @@ pub trait Jtag<DEPS>: From<DEPS> {
                 capture: true,
                 tms: false,
             },
-            &[(req.a2a3 << 1) | req.r_nw as u8],
+            &[((req.a2a3 as u8) << 1) | req.r_nw as u8],
             core::slice::from_mut(&mut ack),
         );
 
