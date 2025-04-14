@@ -71,7 +71,7 @@ impl From<u8> for TransferInfo {
             } else {
                 RnW::W
             },
-            a2a3: ((byte & DAP_TRANSFER_A2) >> 2) | ((byte & DAP_TRANSFER_A3) >> 3),
+            a2a3: (byte & (DAP_TRANSFER_A2 | DAP_TRANSFER_A3)) >> 2,
             match_value: byte & DAP_TRANSFER_MATCH_VALUE != 0,
             match_mask: byte & DAP_TRANSFER_MATCH_MASK != 0,
             timestamp: byte & DAP_TRANSFER_TIMESTAMP != 0,
