@@ -143,8 +143,10 @@ impl Config {
             warn!("Invalid JTAG TAP index: {}", index);
             return false;
         }
-        info!("Selecting JTAG TAP #{}", index);
-        self.index = index;
+        if index != self.index {
+            info!("Selecting JTAG TAP #{}", index);
+            self.index = index;
+        }
         true
     }
 }
