@@ -595,7 +595,7 @@ where
             }
         };
 
-        // Allways succeeds
+        // Always succeeds
         resp.write_ok();
 
         jtag.sequences(req, resp);
