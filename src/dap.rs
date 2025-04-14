@@ -1018,7 +1018,7 @@ where
         if matches!(response_value, TransferResult::Ok(_)) {
             // Select JTAG chain
             if ir != JTAG_DPACC {
-                jtag.shift_ir(ir);
+                jtag.shift_ir(JTAG_DPACC);
             }
 
             // Check last write, or read previous read's result.
