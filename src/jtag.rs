@@ -1,5 +1,5 @@
 use crate::{
-    dap,
+    dap::{self, TransferConfig},
     swd::{APnDP, RnW},
 };
 
@@ -197,93 +197,63 @@ pub trait Jtag<DEPS>: From<DEPS> {
     /// Shift out the instruction register (IR).
     fn shift_ir(&mut self, ir: u32) {
         const IDLE_TO_SHIFT_IR: &[bool] = &[true, true, false, false];
-        const EXIT1_IR_TO_IDLE: &[bool] = &[true, false];
+        const EXIT1_TO_IDLE: &[bool] = &[true, false];
         self.tms_sequence(IDLE_TO_SHIFT_IR);
 
         let tap = self.config().current_tap();
         let ir_length = tap.ir_length;
-        let bypass_before = tap.ir_before;
-        let bypass_after = tap.ir_after;
+        let bypass_bits_before = tap.ir_before;
+        let bypass_bits_after = tap.ir_after;
 
         // Send the bypass bits before the IR.
-        bypass_bits(self, bypass_before, false);
+        bypass_before(self, bypass_bits_before, false);
 
         // Send the IR bits.
-        let mut ir = ir;
+        shift_register(self, ir, ir_length, bypass_bits_after);
+        bypass_after(self, bypass_bits_after);
 
-        // All bits except last with TMS = 0
-        let mut ir_bits = ir_length;
-        while ir_bits > 1 {
-            let bits = (ir_bits - 1).min(8);
-            self.sequence(
-                SequenceInfo {
-                    n_bits: bits,
-                    capture: false,
-                    tms: false,
-                },
-                &[ir as u8],
-                &mut [],
-            );
-
-            ir >>= bits;
-            ir_bits -= bits;
-        }
-
-        // Last bit with TMS = 1
-        self.sequence(
-            SequenceInfo {
-                n_bits: 1,
-                capture: false,
-                tms: bypass_after == 0,
-            },
-            &[ir as u8],
-            &mut [],
-        );
-
-        if bypass_after > 0 {
-            if bypass_after > 1 {
-                // Send the bypass bits after the IR.
-                bypass_bits(self, bypass_after.saturating_sub(1), false);
-            }
-
-            // Send the last bypass bit with TMS = 1
-            bypass_bits(self, bypass_after, true);
-        }
-
-        self.tms_sequence(EXIT1_IR_TO_IDLE);
+        self.tms_sequence(EXIT1_TO_IDLE);
     }
 
     /// Shift out the data register (DR) and return the captured bits.
+    ///
+    /// This function starts from Test/Idle and ends in Test/Idle, after shifting out idle bits.
     fn shift_dr(&mut self, dr: u32) -> u32 {
         const IDLE_TO_SHIFT_DR: &[bool] = &[true, false, false];
-        const EXIT1_DR_TO_IDLE: &[bool] = &[true, false];
+        const EXIT1_TO_IDLE: &[bool] = &[true, false];
         self.tms_sequence(IDLE_TO_SHIFT_DR);
 
         let device_index = self.config().index as usize;
         let device_count = self.config().device_count as usize;
-        let bypass_before = device_index as u16;
-        let bypass_after = device_count as u16 - bypass_before - 1;
+        let bypass_bits_before = device_index as u16;
+        let bypass_bits_after = device_count as u16 - bypass_bits_before - 1;
 
         // Send the bypass bits before the DR.
-        bypass_bits(self, bypass_before, false);
+        bypass_before(self, bypass_bits_before, false);
 
         // Send the DR bits.
-        shift_dr(self, dr, bypass_after)
+        let dr = shift_register(self, dr, 32, bypass_bits_after);
+
+        self.tms_sequence(EXIT1_TO_IDLE);
+        bypass_after(self, bypass_bits_after);
+
+        dr
     }
 
     /// Shift out the data register (DR) for an ABORT command.
     fn write_abort(&mut self, data: u32) {
         const IDLE_TO_SHIFT_DR: &[bool] = &[true, false, false];
-        const EXIT1_DR_TO_IDLE: &[bool] = &[true, false];
+        const EXIT1_TO_IDLE: &[bool] = &[true, false];
+
         self.tms_sequence(IDLE_TO_SHIFT_DR);
 
         let device_index = self.config().index as usize;
         let device_count = self.config().device_count as usize;
-        let bypass_before = device_index as u16;
-        let bypass_after = device_count as u16 - bypass_before - 1;
+        let bypass_bits_before = device_index as u16;
+        let bypass_bits_after = device_count as u16 - bypass_bits_before - 1;
 
         // Send the bypass bits before the DR.
-        bypass_bits(self, bypass_before, false);
+        bypass_before(self, bypass_bits_before, false);
 
         // RnW=0, A2=0, A3=0, ignore ACK
         self.sequence(
@@ -296,25 +266,33 @@ pub trait Jtag<DEPS>: From<DEPS> {
             &mut [],
         );
 
-        shift_dr(self, data, bypass_after);
+        shift_register(self, data, 32, bypass_bits_after);
+        bypass_after(self, bypass_bits_after);
+
+        self.tms_sequence(EXIT1_TO_IDLE);
     }
 
     /// Shift out the data register (DR) for an ABORT command.
-    fn transfer(&mut self, req: TransferInfo, data: u32) -> TransferResult {
+    fn transfer(
+        &mut self,
+        req: TransferInfo,
+        transfer_config: &TransferConfig,
+        data: u32,
+    ) -> TransferResult {
         const IDLE_TO_SHIFT_DR: &[bool] = &[true, false, false];
         const SHIFT_DR_TO_IDLE: &[bool] = &[true, true, false];
-        const EXIT1_DR_TO_IDLE: &[bool] = &[true, false];
+        const EXIT1_TO_IDLE: &[bool] = &[true, false];
+
         self.tms_sequence(IDLE_TO_SHIFT_DR);
 
         let device_index = self.config().index as usize;
         let device_count = self.config().device_count as usize;
-        let bypass_before = device_index as u16;
-        let bypass_after = device_count as u16 - bypass_before - 1;
+        let bypass_bits_before = device_index as u16;
+        let bypass_bits_after = device_count as u16 - bypass_bits_before - 1;
 
         // Send the bypass bits before the DR.
-        bypass_bits(self, bypass_before, false);
+        bypass_before(self, bypass_bits_before, false);
 
-        // RnW=0, A2=0, A3=0
         let mut ack = 0;
         self.sequence(
             SequenceInfo {
@@ -326,12 +304,14 @@ pub trait Jtag<DEPS>: From<DEPS> {
             core::slice::from_mut(&mut ack),
         );
 
-        const DAP_TRANSFER_OK: u8 = 0x01;
-        const DAP_TRANSFER_WAIT: u8 = 0x02;
-        const DAP_TRANSFER_FAULT: u8 = 0x03;
+        const DAP_TRANSFER_WAIT: u8 = 0x01;
+        const DAP_TRANSFER_OK: u8 = 0x02;
 
-        if ack == DAP_TRANSFER_OK {
-            let captured_dr = shift_dr(self, data, bypass_after);
+        let result = if ack == DAP_TRANSFER_OK {
+            let captured_dr = shift_register(self, data, 32, bypass_bits_after);
+            bypass_after(self, bypass_bits_after);
+
+            self.tms_sequence(EXIT1_TO_IDLE);
 
             TransferResult::Ok(captured_dr)
         } else {
@@ -341,17 +321,34 @@ pub trait Jtag<DEPS>: From<DEPS> {
             } else {
                 TransferResult::Fault
             }
-        }
+        };
+
+        // Idle cycles
+        self.sequence(
+            SequenceInfo {
+                n_bits: transfer_config.idle_cycles,
+                capture: false,
+                tms: false,
+            },
+            &[0; 32],
+            &mut [],
+        );
+
+        result
     }
 }
 
-fn shift_dr<DEPS>(jtag: &mut impl Jtag<DEPS>, data: u32, bypass_after: u16) -> u32 {
+fn shift_register<DEPS>(
+    jtag: &mut impl Jtag<DEPS>,
+    data: u32,
+    mut dr_bits: u8,
+    bypass_after: u16,
+) -> u32 {
     // Send the DR bits.
     let mut dr = data;
 
     // All bits except last with TMS = 0
     let mut captured_dr = 0;
-    let mut dr_bits = 32;
     while dr_bits > 1 {
         let bits = (dr_bits - 1).min(8);
 
@@ -387,20 +384,10 @@ fn shift_dr<DEPS>(jtag: &mut impl Jtag<DEPS>, data: u32, bypass_after: u16) -> u
     captured_dr >>= 1;
     captured_dr |= (captured_byte as u32) << 31;
 
-    if bypass_after > 0 {
-        if bypass_after > 1 {
-            // Send the bypass bits after the DR.
-            bypass_bits(jtag, bypass_after.saturating_sub(1), false);
-        }
-
-        // Send the last bypass bit with TMS = 1
-        bypass_bits(jtag, bypass_after, true);
-    }
-
     captured_dr
 }
 
-fn bypass_bits<DEPS>(jtag: &mut impl Jtag<DEPS>, mut bypass: u16, tms: bool) {
+fn bypass_before<DEPS>(jtag: &mut impl Jtag<DEPS>, mut bypass: u16, tms: bool) {
     while bypass > 0 {
         let bits = bypass.min(8);
         bypass -= bits;
@@ -414,6 +401,18 @@ fn bypass_bits<DEPS>(jtag: &mut impl Jtag<DEPS>, mut bypass: u16, tms: bool) {
             &[0xFF],
             &mut [],
         );
+    }
+}
+
+fn bypass_after<DEPS>(jtag: &mut impl Jtag<DEPS>, bypass_after: u16) {
+    if bypass_after > 0 {
+        if bypass_after > 1 {
+            // Send the bypass bits after the DR.
+            bypass_before(jtag, bypass_after.saturating_sub(1), false);
+        }
+
+        // Send the last bypass bit with TMS = 1
+        bypass_before(jtag, 1, true);
     }
 }
 
