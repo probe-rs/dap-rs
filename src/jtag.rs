@@ -38,16 +38,28 @@ impl From<u8> for SequenceInfo {
     }
 }
 
-/// Describes a JTAG sequence request.
+/// Describes a single transfer in a JTAG transfer request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TransferInfo {
+pub(crate) struct TransferInfo {
+    /// Whether the transfer is to an AP or DP.
     pub ap_ndp: APnDP,
     pub r_nw: RnW,
     pub a2a3: DPRegister,
     pub match_value: bool,
     pub match_mask: bool,
     pub timestamp: bool,
+}
+
+impl TransferInfo {
+    pub(crate) const RDBUFF: Self = Self {
+        r_nw: RnW::R,
+        a2a3: DPRegister::RDBUFF,
+        ap_ndp: APnDP::DP,
+        match_value: false,
+        match_mask: false,
+        timestamp: false,
+    };
 }
 
 impl From<u8> for TransferInfo {
@@ -79,6 +91,7 @@ impl From<u8> for TransferInfo {
     }
 }
 
+/// Describes the position of a TAP in the JTAG chain.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TapConfig {
@@ -111,6 +124,10 @@ pub struct Config {
 }
 
 impl Config {
+    /// Creates a new, empty JTAG interface configuration.
+    ///
+    /// The probe will be able to connect to JTAG chains with up to
+    /// `chain_buffer.len()` TAPs.
     pub fn new(chain_buffer: &'static mut [TapConfig]) -> Self {
         Self {
             device_count: 0,
@@ -151,6 +168,20 @@ impl Config {
     }
 }
 
+const IDLE_TO_SHIFT_DR: &[bool] = &[true, false, false];
+const IDLE_TO_SHIFT_IR: &[bool] = &[true, true, false, false];
+const SHIFT_TO_IDLE: &[bool] = &[true, true, false];
+const EXIT1_TO_IDLE: &[bool] = &[true, false];
+
+pub(crate) const JTAG_IR_ABORT: u32 = 0x08;
+pub(crate) const JTAG_IR_DPACC: u32 = 0x0A;
+pub(crate) const JTAG_IR_APACC: u32 = 0x0B;
+pub(crate) const JTAG_IR_IDCODE: u32 = 0x0E;
+
+// TODO: currently this only supports JTAG DP V0.
+const DAP_TRANSFER_OK_FAULT: u32 = 0x02;
+
+/// JTAG interface.
 pub trait Jtag<DEPS>: From<DEPS> {
     /// If JTAG is available or not.
     const AVAILABLE: bool;
@@ -197,9 +228,9 @@ pub trait Jtag<DEPS>: From<DEPS> {
     fn set_clock(&mut self, max_frequency: u32) -> bool;
 
     /// Shift out the instruction register (IR).
+    ///
+    /// This function starts from Test/Idle and ends in Test/Idle, after shifting out idle bits.
     fn shift_ir(&mut self, ir: u32) {
-        const IDLE_TO_SHIFT_IR: &[bool] = &[true, true, false, false];
-        const EXIT1_TO_IDLE: &[bool] = &[true, false];
         self.tms_sequence(IDLE_TO_SHIFT_IR);
 
         let tap = self.config().current_tap();
@@ -207,12 +238,10 @@ pub trait Jtag<DEPS>: From<DEPS> {
         let bypass_bits_before = tap.ir_before;
         let bypass_bits_after = tap.ir_after;
 
-        // Send the bypass bits before the IR.
-        bypass_before(self, bypass_bits_before, false);
+        shift_repeated_tdi(self, 0xFF, bypass_bits_before, false);
 
-        // Send the IR bits.
-        shift_register(self, ir, ir_length, bypass_bits_after);
-        bypass_after(self, bypass_bits_after);
+        shift_register_data(self, ir, ir_length, bypass_bits_after == 0);
+        bypass_after_data(self, bypass_bits_after);
 
         self.tms_sequence(EXIT1_TO_IDLE);
     }
@@ -221,8 +250,6 @@ pub trait Jtag<DEPS>: From<DEPS> {
     ///
     /// This function starts from Test/Idle and ends in Test/Idle, after shifting out idle bits.
     fn shift_dr(&mut self, dr: u32) -> u32 {
-        const IDLE_TO_SHIFT_DR: &[bool] = &[true, false, false];
-        const EXIT1_TO_IDLE: &[bool] = &[true, false];
         self.tms_sequence(IDLE_TO_SHIFT_DR);
 
         let device_index = self.config().index as usize;
@@ -230,209 +257,170 @@ pub trait Jtag<DEPS>: From<DEPS> {
         let bypass_bits_before = device_index as u16;
         let bypass_bits_after = device_count as u16 - bypass_bits_before - 1;
 
-        // Send the bypass bits before the DR.
-        bypass_before(self, bypass_bits_before, false);
+        shift_repeated_tdi(self, 0xFF, bypass_bits_before, false);
 
-        // Send the DR bits.
-        let dr = shift_register(self, dr, 32, bypass_bits_after);
+        let dr = shift_register_data(self, dr, 32, bypass_bits_after == 0);
+        bypass_after_data(self, bypass_bits_after);
 
         self.tms_sequence(EXIT1_TO_IDLE);
-        bypass_after(self, bypass_bits_after);
 
         dr
     }
 
     /// Shift out the data register (DR) for an ABORT command.
     fn write_abort(&mut self, data: u32) {
-        const IDLE_TO_SHIFT_DR: &[bool] = &[true, false, false];
-        const EXIT1_TO_IDLE: &[bool] = &[true, false];
-
-        self.tms_sequence(IDLE_TO_SHIFT_DR);
-
-        let device_index = self.config().index as usize;
-        let device_count = self.config().device_count as usize;
-        let bypass_bits_before = device_index as u16;
-        let bypass_bits_after = device_count as u16 - bypass_bits_before - 1;
-
-        // Send the bypass bits before the DR.
-        bypass_before(self, bypass_bits_before, false);
-
-        // RnW=0, A2=0, A3=0, ignore ACK
-        self.sequence(
-            SequenceInfo {
-                n_bits: 3,
-                capture: false,
-                tms: false,
-            },
-            &[0],
-            &mut [],
-        );
-
-        shift_register(self, data, 32, bypass_bits_after);
-        bypass_after(self, bypass_bits_after);
-
-        self.tms_sequence(EXIT1_TO_IDLE);
+        transfer(self, RnW::W, 0, 8, data, false);
     }
 
-    /// Shift out the data register (DR) for an ABORT command.
+    /// Execute a JTAG DAP transfer.
+    ///
+    /// This function executes the data part of a DPACC or APACC scan, starting from Test/Idle
+    /// and ending in Test/Idle, after shifting out idle bits.
     fn transfer(
         &mut self,
-        req: TransferInfo,
+        r_nw: RnW,
+        a2a3: u8,
         transfer_config: &TransferConfig,
         data: u32,
     ) -> TransferResult {
-        const IDLE_TO_SHIFT_DR: &[bool] = &[true, false, false];
-        const SHIFT_DR_TO_IDLE: &[bool] = &[true, true, false];
-        const EXIT1_TO_IDLE: &[bool] = &[true, false];
-
-        self.tms_sequence(IDLE_TO_SHIFT_DR);
-
-        let device_index = self.config().index as usize;
-        let device_count = self.config().device_count as usize;
-        let bypass_bits_before = device_index as u16;
-        let bypass_bits_after = device_count as u16 - bypass_bits_before - 1;
-
-        // Send the bypass bits before the DR.
-        bypass_before(self, bypass_bits_before, false);
-
-        let mut ack = 0;
-        self.sequence(
-            SequenceInfo {
-                n_bits: 3,
-                capture: true,
-                tms: false,
-            },
-            &[((req.a2a3 as u8) << 1) | req.r_nw as u8],
-            core::slice::from_mut(&mut ack),
-        );
-
-        const DAP_TRANSFER_WAIT: u8 = 0x01;
-        const DAP_TRANSFER_OK: u8 = 0x02;
-
-        let result = if ack == DAP_TRANSFER_OK {
-            let captured_dr = shift_register(self, data, 32, bypass_bits_after);
-            bypass_after(self, bypass_bits_after);
-
-            self.tms_sequence(EXIT1_TO_IDLE);
-
-            TransferResult::Ok(captured_dr)
-        } else {
-            self.tms_sequence(SHIFT_DR_TO_IDLE);
-            if ack == DAP_TRANSFER_WAIT {
-                TransferResult::Wait
-            } else {
-                TransferResult::Fault
-            }
-        };
-
-        // Idle cycles
-        self.sequence(
-            SequenceInfo {
-                n_bits: transfer_config.idle_cycles,
-                capture: false,
-                tms: false,
-            },
-            &[0; 32],
-            &mut [],
-        );
-
-        result
+        transfer(self, r_nw, a2a3, transfer_config.idle_cycles, data, true)
     }
 }
 
-fn shift_register<DEPS>(
+fn transfer<DEPS>(
     jtag: &mut impl Jtag<DEPS>,
+    r_nw: RnW,
+    a2a3: u8,
+    idle_cycles: u8,
     data: u32,
-    mut dr_bits: u8,
-    bypass_after: u16,
-) -> u32 {
-    // Send the DR bits.
-    let mut dr = data;
+    check_ack: bool,
+) -> TransferResult {
+    jtag.tms_sequence(IDLE_TO_SHIFT_DR);
 
+    let device_index = jtag.config().index as usize;
+    let device_count = jtag.config().device_count as usize;
+    let bypass_bits_before = device_index as u16;
+    let bypass_bits_after = device_count as u16 - bypass_bits_before - 1;
+
+    shift_repeated_tdi(jtag, 0xFF, bypass_bits_before, false);
+
+    // Shift out the register address and read/write bits, read back ack.
+    let ack = shift_register_data(jtag, (a2a3 << 1) as u32 | (r_nw as u32), 3, false);
+
+    // Based on ack, shift out data or stop the transfer.
+    let result = if ack == DAP_TRANSFER_OK_FAULT || !check_ack {
+        let captured_dr = shift_register_data(jtag, data, 32, bypass_bits_after == 0);
+        bypass_after_data(jtag, bypass_bits_after);
+
+        jtag.tms_sequence(EXIT1_TO_IDLE);
+
+        TransferResult::Ok(captured_dr)
+    } else {
+        jtag.tms_sequence(SHIFT_TO_IDLE);
+        TransferResult::Wait
+    };
+
+    shift_repeated_tdi(jtag, 0xFF, idle_cycles as u16, false);
+
+    result
+}
+
+/// Shift out data, while assuming to be in either Shift-DR or Shift-IR state.
+///
+/// If `exit_shift` is true, it will exit the shift state (into Exit1-DR or Exit1-IR).
+///
+/// The function will return the captured TDO data.
+fn shift_register_data<DEPS>(
+    jtag: &mut impl Jtag<DEPS>,
+    mut data: u32,
+    clock_cycles: u8,
+    exit_shift: bool,
+) -> u32 {
     // All bits except last with TMS = 0
     let mut captured_dr = 0;
-    while dr_bits > 1 {
-        let bits = (dr_bits - 1).min(8);
+    let mut clocks = clock_cycles;
+    while clocks > 1 {
+        let bits = (clocks - 1).min(8);
 
-        let mut captured_byte = 0;
-        jtag.sequence(
-            SequenceInfo {
-                n_bits: bits,
-                capture: true,
-                tms: false,
-            },
-            &[dr as u8],
-            core::slice::from_mut(&mut captured_byte),
-        );
+        let captured_byte = shift_tdi(jtag, data as u8, bits, false);
         captured_dr >>= bits;
-        captured_dr |= (captured_byte as u32) << (32 - bits);
+        captured_dr |= (captured_byte as u32) << (clock_cycles - bits);
 
-        dr >>= bits;
-        dr_bits -= bits;
+        data >>= bits;
+        clocks -= bits;
     }
 
-    // Last bit (with TMS = 1 if bypass_after == 0)
-    let mut captured_byte = 0;
-    jtag.sequence(
-        SequenceInfo {
-            n_bits: 1,
-            capture: true,
-            tms: bypass_after == 0,
-        },
-        &[dr as u8],
-        core::slice::from_mut(&mut captured_byte),
-    );
-
+    // Last bit (with TMS = 1 if exit_shift)
+    let captured_byte = shift_tdi(jtag, data as u8, 1, exit_shift);
     captured_dr >>= 1;
-    captured_dr |= (captured_byte as u32) << 31;
+    captured_dr |= (captured_byte as u32) << (clock_cycles - 1);
 
     captured_dr
 }
 
-fn bypass_before<DEPS>(jtag: &mut impl Jtag<DEPS>, mut bypass: u16, tms: bool) {
-    while bypass > 0 {
-        let bits = bypass.min(8);
-        bypass -= bits;
+/// Shift out `clocks` bits of TDI data, with TMS set to the given value.
+fn shift_repeated_tdi<DEPS>(jtag: &mut impl Jtag<DEPS>, tdi: u8, mut clocks: u16, tms: bool) {
+    while clocks > 0 {
+        let n = clocks.min(8);
+        clocks -= n;
 
-        jtag.sequence(
-            SequenceInfo {
-                n_bits: bits as u8,
-                capture: false,
-                tms,
-            },
-            &[0xFF],
-            &mut [],
-        );
+        shift_tdi(jtag, tdi, n as u8, tms);
     }
 }
 
-fn bypass_after<DEPS>(jtag: &mut impl Jtag<DEPS>, bypass_after: u16) {
+/// Shift out `clocks` (at most 8) bits of TDI data, with TMS set to the given value.
+///
+/// Returns the captured TDO data.
+fn shift_tdi<DEPS>(jtag: &mut impl Jtag<DEPS>, tdi: u8, clocks: u8, tms: bool) -> u8 {
+    let mut tdo = 0;
+    jtag.sequence(
+        SequenceInfo {
+            n_bits: clocks as u8,
+            capture: true,
+            tms,
+        },
+        &[tdi],
+        core::slice::from_mut(&mut tdo),
+    );
+    tdo
+}
+
+/// Send the bypass bits after data bits.
+///
+/// Bypass bits are used to skip over TAPs in the JTAG chain. The TDI value is 1, while TMS is
+/// driven to stay in Shift-DR or Shift-IR until the last bit, where TMS is driven to 1 to exit
+/// the shift state.
+fn bypass_after_data<DEPS>(jtag: &mut impl Jtag<DEPS>, bypass_after: u16) {
     if bypass_after > 0 {
         if bypass_after > 1 {
             // Send the bypass bits after the DR.
-            bypass_before(jtag, bypass_after.saturating_sub(1), false);
+            shift_repeated_tdi(jtag, 0xFF, bypass_after.saturating_sub(1), false);
         }
 
         // Send the last bypass bit with TMS = 1
-        bypass_before(jtag, 1, true);
+        shift_repeated_tdi(jtag, 0xFF, 1, true);
     }
 }
 
+/// The result of a single DAP JTAG transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TransferResult {
+    /// The transfer was successful and this variant contains the captured data.
     Ok(u32),
+    /// The device returned a wait response.
     Wait,
-    Nack,
+    /// The device returned a fault response.
     Fault,
-    Mismatch,
+    /// The device returned data that does not match what the transfer expects.
+    Mismatch, // TODO shouldn't be part of the public API.
 }
+
 impl TransferResult {
     pub(crate) fn status(&self) -> u8 {
         match self {
             TransferResult::Ok(_) => 0x1,
             TransferResult::Wait => 0x2,
-            TransferResult::Nack => 0x4,
             TransferResult::Fault => 0x8,
             TransferResult::Mismatch => 0x10,
         }
