@@ -100,10 +100,22 @@ pub enum DataPhase {
     AlwaysDataPhase = 1,
 }
 
+/// The SWD interface configuration.
+pub struct Config {}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
 /// Definition of SWD communication.
 pub trait Swd<DEPS>: From<DEPS> {
     /// If SWD is available or not.
     const AVAILABLE: bool;
+
+    /// Returns a mutable reference to the SWD interface configuration.
+    fn config(&mut self) -> &mut Config;
 
     /// Helper method over `read_inner` to retry during `AckWait`.
     fn read(&mut self, wait_retries: usize, apndp: APnDP, a: DPRegister) -> Result<u32> {

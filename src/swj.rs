@@ -1,5 +1,7 @@
 use bitflags::bitflags;
 
+use crate::{jtag, swd};
+
 bitflags! {
     /// Pin definitions in the SWJ_Pins command
     pub struct Pins: u8 {
@@ -35,4 +37,10 @@ pub trait Dependencies<SWD, JTAG>: From<SWD> + From<JTAG> {
 
     /// Set pins in high impedance mode
     fn high_impedance_mode(&mut self);
+
+    /// Returns the SWD interface configuration.
+    fn swd_config(&mut self) -> &mut swd::Config;
+
+    /// Returns the JTAG interface configuration.
+    fn jtag_config(&mut self) -> &mut jtag::Config;
 }
