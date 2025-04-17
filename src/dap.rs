@@ -1255,13 +1255,6 @@ fn transfer_with_retry<DEPS>(
         }
         retry -= 1;
     }
-    if !matches!(response_value, jtag::TransferResult::Ok(_)) {
-        // If we get a wait response, we need to abort the transfer
-        // and set the abort bit in the response.
-        warn!("Transfer aborted");
-        jtag.shift_ir(jtag::JTAG_IR_ABORT);
-        jtag.write_abort(1);
-    }
     response_value
 }
 
