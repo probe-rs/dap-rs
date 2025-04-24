@@ -186,6 +186,11 @@ pub trait Jtag<DEPS>: From<DEPS> {
     /// Returns whether JTAG is available or not.
     fn available(deps: &DEPS) -> bool;
 
+    /// Returns the current timestamp.
+    fn timestamp(&self) -> u32 {
+        0
+    }
+
     /// Returns a mutable reference to the JTAG interface configuration.
     fn config(&mut self) -> &mut Config;
 
