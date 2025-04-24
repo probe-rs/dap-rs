@@ -183,8 +183,8 @@ const DAP_TRANSFER_OK_FAULT: u32 = 0x02;
 
 /// JTAG interface.
 pub trait Jtag<DEPS>: From<DEPS> {
-    /// If JTAG is available or not.
-    const AVAILABLE: bool;
+    /// Returns whether JTAG is available or not.
+    fn available(deps: &DEPS) -> bool;
 
     /// Returns a mutable reference to the JTAG interface configuration.
     fn config(&mut self) -> &mut Config;
