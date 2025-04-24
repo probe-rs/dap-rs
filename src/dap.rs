@@ -51,7 +51,7 @@ bitflags! {
 /// DAP handler.
 pub struct Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> {
     state: State<DEPS, SWD, JTAG>,
-    swo: Option<SWO>,
+    swo: SWO,
     swo_streaming: bool,
     version_string: &'a str,
     transfer_config: TransferConfig,
@@ -75,7 +75,7 @@ where
         dependencies: DEPS,
         leds: LEDS,
         wait: WAIT,
-        swo: Option<SWO>,
+        swo: SWO,
         version_string: &'a str,
     ) -> Self {
         assert!(SWD::available(&dependencies) || JTAG::available(&dependencies));
@@ -93,19 +93,16 @@ where
             }
             // Bit 2: SWO UART optional
             // Bit 3: SWO Manchester optional
-            if let Some(swo) = &swo {
-                if swo.support().uart {
-                    caps.insert(Capabilities::SWO_UART);
-                }
-                if swo.support().manchester {
-                    caps.insert(Capabilities::SWO_MANCHESTER);
-                }
+            if swo.support().uart {
+                caps.insert(Capabilities::SWO_UART);
+            }
+            if swo.support().manchester {
+                caps.insert(Capabilities::SWO_MANCHESTER);
             }
             // Bit 4: Atomic commands not supported
             // Bit 5: Test Domain Timer not supported
-            // Bit 6: SWO Streaming Trace supported
-            if swo.is_some() {
-                // TODO this depends on the transport layer
+            // Bit 6: SWO Streaming Trace optional
+            if swo.support().streaming {
                 caps.insert(Capabilities::SWO_STREAMING);
             }
             caps
@@ -219,11 +216,7 @@ where
             }
             Ok(DapInfoID::SWOTraceBufferSize) => {
                 resp.write_u8(4);
-                let size = match &self.swo {
-                    Some(swo) => swo.buffer_size(),
-                    None => 0,
-                };
-                resp.write_u32(size as u32);
+                resp.write_u32(self.swo.buffer_size());
             }
             Ok(DapInfoID::MaxPacketCount) => {
                 resp.write_u8(1);
@@ -499,48 +492,34 @@ where
     }
 
     fn process_swo_mode(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        let mode = req.next_u8();
-
-        let swo = if let Some(swo) = &mut self.swo {
-            swo
-        } else {
-            resp.write_err();
-            return;
+        let success = match swo::SwoMode::try_from(req.next_u8()) {
+            Ok(mode) => self.swo.set_mode(mode),
+            _ => false,
         };
 
-        match swo::SwoMode::try_from(mode) {
-            Ok(mode) => {
-                swo.set_mode(mode);
-                resp.write_ok();
-            }
-            _ => resp.write_err(),
+        if success {
+            resp.write_ok();
+        } else {
+            resp.write_err();
         }
     }
 
     fn process_swo_baudrate(&mut self, mut req: Request, resp: &mut ResponseWriter) {
         let target = req.next_u32();
-        let actual = if let Some(swo) = &mut self.swo {
-            swo.set_baudrate(target)
-        } else {
-            0
-        };
+        let actual = self.swo.set_baudrate(target);
         resp.write_u32(actual);
     }
 
     fn process_swo_control(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        let swo = if let Some(swo) = &mut self.swo {
-            swo
-        } else {
-            resp.write_err();
-            return;
+        let success = match swo::SwoControl::try_from(req.next_u8()) {
+            Ok(control) => self.swo.set_control(control),
+            _ => false,
         };
 
-        match swo::SwoControl::try_from(req.next_u8()) {
-            Ok(control) => {
-                swo.set_control(control);
-                resp.write_ok();
-            }
-            _ => resp.write_err(),
+        if success {
+            resp.write_ok();
+        } else {
+            resp.write_err();
         }
     }
 
@@ -549,11 +528,7 @@ where
         // Bit 0: trace capture active
         // Bit 6: trace stream error (always written as 0)
         // Bit 7: trace buffer overflow (always written as 0)
-        let (active, len) = if let Some(swo) = &self.swo {
-            (swo.is_active(), swo.bytes_available())
-        } else {
-            (false, 0)
-        };
+        let (active, len) = (self.swo.is_active(), self.swo.bytes_available());
 
         resp.write_u8(active as u8);
         // Trace count: remaining bytes in buffer
@@ -565,11 +540,8 @@ where
         // Bit 0: trace capture active
         // Bit 6: trace stream error (always written as 0)
         // Bit 7: trace buffer overflow (always written as 0)
-        let (active, len) = if let Some(swo) = &self.swo {
-            (swo.is_active(), swo.bytes_available())
-        } else {
-            (false, 0)
-        };
+        let (active, len) = (self.swo.is_active(), self.swo.bytes_available());
+
         resp.write_u8(active as u8);
         // Trace count: remaining bytes in buffer.
         resp.write_u32(len);
@@ -580,11 +552,7 @@ where
     }
 
     fn process_swo_data(&mut self, mut req: Request, resp: &mut ResponseWriter) {
-        let active = if let Some(swo) = &mut self.swo {
-            swo.is_active()
-        } else {
-            false
-        };
+        let active = self.swo.is_active();
 
         // Write status byte to response
         resp.write_u8(active as u8);
@@ -601,11 +569,7 @@ where
         }
 
         // Read data from UART
-        let len = if let Some(swo) = &mut self.swo {
-            swo.polling_data(&mut buf)
-        } else {
-            0
-        };
+        let len = self.swo.polling_data(&mut buf);
         resp.skip(len as _);
 
         // Go back and write length
@@ -1290,7 +1254,7 @@ fn transfer_with_retry<DEPS>(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::mock_device::*;
+    use crate::{mock_device::*, swo::NoSwo};
     use mockall::predicate::*;
 
     struct FakeLEDs {}
@@ -1312,7 +1276,7 @@ mod test {
         StdDelayUs,
         MockSwdJtagDevice,
         MockSwdJtagDevice,
-        swo::MockSwo,
+        NoSwo,
     >;
 
     #[test]
@@ -1321,7 +1285,7 @@ mod test {
             MockSwdJtagDevice::new(),
             FakeLEDs {},
             StdDelayUs {},
-            None,
+            NoSwo,
             "test_dap",
         );
 
@@ -1348,7 +1312,7 @@ mod test {
             MockSwdJtagDevice::new(),
             FakeLEDs {},
             StdDelayUs {},
-            None,
+            NoSwo,
             "test_dap",
         );
 
@@ -1378,7 +1342,7 @@ mod test {
             MockSwdJtagDevice::new(),
             FakeLEDs {},
             StdDelayUs {},
-            None,
+            NoSwo,
             "test_dap",
         );
 
@@ -1411,7 +1375,7 @@ mod test {
             MockSwdJtagDevice::new(),
             FakeLEDs {},
             StdDelayUs {},
-            None,
+            NoSwo,
             "test_dap",
         );
 
@@ -1445,7 +1409,7 @@ mod test {
             MockSwdJtagDevice::new(),
             FakeLEDs {},
             StdDelayUs {},
-            None,
+            NoSwo,
             "test_dap",
         );
 
