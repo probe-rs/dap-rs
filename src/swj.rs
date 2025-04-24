@@ -1,5 +1,7 @@
 use bitflags::bitflags;
 
+use crate::{jtag, swd};
+
 bitflags! {
     /// Pin definitions in the SWJ_Pins command
     pub struct Pins: u8 {
@@ -24,6 +26,11 @@ bitflags! {
 ///
 /// User has to provide implementations of SWJ_{Pins, Sequence, Clock} commands
 pub trait Dependencies<SWD, JTAG>: From<SWD> + From<JTAG> {
+    /// Returns true if the device can generate timestamps.
+    fn timer_available(&self) -> bool {
+        false
+    }
+
     /// Runner for SWJ_Pins commands.
     fn process_swj_pins(&mut self, output: Pins, mask: Pins, wait_us: u32) -> Pins;
 
@@ -35,4 +42,10 @@ pub trait Dependencies<SWD, JTAG>: From<SWD> + From<JTAG> {
 
     /// Set pins in high impedance mode
     fn high_impedance_mode(&mut self);
+
+    /// Returns the SWD interface configuration.
+    fn swd_config(&mut self) -> &mut swd::Config;
+
+    /// Returns the JTAG interface configuration.
+    fn jtag_config(&mut self) -> &mut jtag::Config;
 }
