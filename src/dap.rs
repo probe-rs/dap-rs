@@ -101,6 +101,9 @@ where
             }
             // Bit 4: Atomic commands not supported
             // Bit 5: Test Domain Timer not supported
+            if dependencies.timer_available() {
+                caps.insert(Capabilities::TEST_DOMAIN_TIMER);
+            }
             // Bit 6: SWO Streaming Trace optional
             if swo.support().streaming {
                 caps.insert(Capabilities::SWO_STREAMING);
@@ -705,7 +708,8 @@ where
             let a = swd::DPRegister::try_from((transfer_req & (3 << 2)) >> 2).unwrap();
             let vmatch = (transfer_req & (1 << 4)) != 0;
             let mmask = (transfer_req & (1 << 5)) != 0;
-            let _ts = (transfer_req & (1 << 7)) != 0;
+            //  Bit 7 (Time Stamp) cannot be combined with Bit 4 (Value Match) or Bit 5 (Match Mask).
+            let timestamp = (transfer_req & (1 << 7)) != 0;
 
             if rnw == swd::RnW::R {
                 // Issue register read
@@ -720,11 +724,20 @@ where
                     if swd.read_ap(wait_retries, a).check(resp.mut_at(2)).is_none() {
                         break;
                     }
+                    if timestamp {
+                        // Store Timestamp of next AP read
+                        resp.write_u32(swd.timestamp());
+                    }
                     match swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(2)) {
                         Some(v) => v,
                         None => break,
                     }
                 } else {
+                    if timestamp {
+                        // Store Timestamp
+                        resp.write_u32(swd.timestamp());
+                    }
+
                     // Reads from DP are not posted, so directly read the register.
                     match swd.read_dp(wait_retries, a).check(resp.mut_at(2)) {
                         Some(v) => v,
@@ -780,6 +793,11 @@ where
                     .is_none()
                 {
                     break;
+                }
+
+                if timestamp {
+                    // Store Timestamp
+                    resp.write_u32(swd.timestamp());
                 }
             }
         }
@@ -848,7 +866,7 @@ where
                     }
 
                     if post_read && request_value.timestamp {
-                        resp.write_u32(0); // TODO real timestamp
+                        resp.write_u32(jtag.timestamp());
                     }
                 }
 
@@ -906,7 +924,7 @@ where
                         }
 
                         if request_value.timestamp {
-                            resp.write_u32(0); // TODO real timestamp
+                            resp.write_u32(jtag.timestamp());
                         }
                         post_read = true;
                     }
@@ -951,7 +969,7 @@ where
                     }
 
                     if request_value.timestamp {
-                        resp.write_u32(0); // TODO real timestamp
+                        resp.write_u32(jtag.timestamp());
                     }
                 }
             }
