@@ -9,6 +9,7 @@ mod request;
 mod response;
 mod state;
 
+use bitflags::bitflags;
 pub use command::*;
 pub use request::*;
 pub use response::*;
@@ -35,6 +36,18 @@ pub struct TransferConfig {
     pub match_mask: u32,
 }
 
+bitflags! {
+    struct Capabilities: u8 {
+        const SWD = 0x01;
+        const JTAG = 0x02;
+        const SWO_UART = 0x04;
+        const SWO_MANCHESTER = 0x08;
+        const ATOMIC_COMMANDS = 0x10;
+        const TEST_DOMAIN_TIMER = 0x20;
+        const SWO_STREAMING = 0x40;
+    }
+}
+
 /// DAP handler.
 pub struct Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> {
     state: State<DEPS, SWD, JTAG>,
@@ -42,6 +55,7 @@ pub struct Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> {
     swo_streaming: bool,
     version_string: &'a str,
     transfer_config: TransferConfig,
+    capabilities: Capabilities,
     // mode: Option<DapMode>,
     leds: LEDS,
     wait: WAIT,
@@ -64,8 +78,38 @@ where
         swo: Option<SWO>,
         version_string: &'a str,
     ) -> Self {
-        // TODO: Replace with const assert
-        assert!(SWD::AVAILABLE || JTAG::AVAILABLE);
+        assert!(SWD::available(&dependencies) || JTAG::available(&dependencies));
+
+        let capabilities = {
+            let mut caps = Capabilities::empty();
+
+            // Bit 0: SWD optional
+            if SWD::available(&dependencies) {
+                caps.insert(Capabilities::SWD);
+            }
+            // Bit 1: JTAG optional
+            if JTAG::available(&dependencies) {
+                caps.insert(Capabilities::JTAG);
+            }
+            // Bit 2: SWO UART optional
+            // Bit 3: SWO Manchester optional
+            if let Some(swo) = &swo {
+                if swo.support().uart {
+                    caps.insert(Capabilities::SWO_UART);
+                }
+                if swo.support().manchester {
+                    caps.insert(Capabilities::SWO_MANCHESTER);
+                }
+            }
+            // Bit 4: Atomic commands not supported
+            // Bit 5: Test Domain Timer not supported
+            // Bit 6: SWO Streaming Trace supported
+            if swo.is_some() {
+                // TODO this depends on the transport layer
+                caps.insert(Capabilities::SWO_STREAMING);
+            }
+            caps
+        };
 
         Dap {
             state: State::new(dependencies),
@@ -81,6 +125,7 @@ where
             // mode: None,
             leds,
             wait,
+            capabilities,
         }
     }
 
@@ -152,7 +197,7 @@ where
         }
     }
 
-    fn process_info(&mut self, mut req: Request, resp: &mut ResponseWriter, version: DapVersion) {
+    fn process_info(&self, mut req: Request, resp: &mut ResponseWriter, version: DapVersion) {
         match DapInfoID::try_from(req.next_u8()) {
             // Return 0-length string for VendorID, ProductID, SerialNumber
             // to indicate they should be read from USB descriptor instead
@@ -170,25 +215,7 @@ where
             Ok(DapInfoID::TargetName) => resp.write_u8(0),
             Ok(DapInfoID::Capabilities) => {
                 resp.write_u8(1);
-                // Bit 0: SWD supported
-                // Bit 1: JTAG supported
-                // Bit 2: SWO UART supported
-                // Bit 3: SWO Manchester not supported
-                // Bit 4: Atomic commands not supported
-                // Bit 5: Test Domain Timer not supported
-                // Bit 6: SWO Streaming Trace supported
-                let swd = (SWD::AVAILABLE as u8) << 0;
-                let jtag = (JTAG::AVAILABLE as u8) << 1;
-                let swo = match &self.swo {
-                    Some(swo) => {
-                        let support = swo.support();
-                        (support.uart as u8) << 2 | (support.manchester as u8) << 3
-                    }
-                    None => 0,
-                };
-                let atomic = 0 << 4;
-                let swo_streaming = 1 << 6;
-                resp.write_u8(swd | jtag | swo | atomic | swo_streaming);
+                resp.write_u8(self.capabilities.bits);
             }
             Ok(DapInfoID::SWOTraceBufferSize) => {
                 resp.write_u8(4);
@@ -249,11 +276,15 @@ where
         info!(
             "DAP connect: {}, SWD: {}, JTAG: {}",
             port,
-            SWD::AVAILABLE,
-            JTAG::AVAILABLE
+            self.capabilities.contains(Capabilities::SWD),
+            self.capabilities.contains(Capabilities::JTAG),
         );
 
-        match (SWD::AVAILABLE, JTAG::AVAILABLE, port) {
+        match (
+            self.capabilities.contains(Capabilities::SWD),
+            self.capabilities.contains(Capabilities::JTAG),
+            port,
+        ) {
             // SWD
             (true, true, ConnectPort::Default)
             | (true, true, ConnectPort::SWD)
@@ -298,8 +329,8 @@ where
 
         let idx = req.next_u8();
         let word = req.next_u32();
-        match (SWD::AVAILABLE, JTAG::AVAILABLE, &mut self.state) {
-            (_, true, State::Jtag(jtag)) => {
+        match &mut self.state {
+            State::Jtag(jtag) => {
                 let config = jtag.config();
                 if !config.select_index(idx) {
                     resp.write_err();
@@ -311,16 +342,14 @@ where
 
                 resp.write_ok();
             }
-            (true, _, State::Swd(swd)) => {
+            State::Swd(swd) => {
                 let wait_retries = self.transfer_config.wait_retries;
                 match swd.write_dp(wait_retries, swd::DPRegister::DPIDR, word) {
                     Ok(_) => resp.write_ok(),
                     Err(_) => resp.write_err(),
                 }
             }
-            _ => {
-                resp.write_err();
-            }
+            _ => resp.write_err(),
         }
     }
 

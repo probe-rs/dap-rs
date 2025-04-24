@@ -51,7 +51,9 @@ impl swj::Dependencies<Self, Self> for MockSwdJtagDevice {
 }
 
 impl swd::Swd<Self> for MockSwdJtagDevice {
-    const AVAILABLE: bool = true;
+    fn available(_: &Self) -> bool {
+        true
+    }
 
     fn set_clock(&mut self, max_frequency: u32) -> bool {
         SwdJtagDevice::set_clock(self, max_frequency)
@@ -79,7 +81,9 @@ impl swd::Swd<Self> for MockSwdJtagDevice {
 }
 
 impl jtag::Jtag<MockSwdJtagDevice> for MockSwdJtagDevice {
-    const AVAILABLE: bool = true;
+    fn available(_: &Self) -> bool {
+        true
+    }
 
     fn set_clock(&mut self, max_frequency: u32) -> bool {
         SwdJtagDevice::set_clock(self, max_frequency)
