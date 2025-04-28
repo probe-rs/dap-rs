@@ -8,6 +8,7 @@ pub(crate) mod fmt;
 
 /// TODO: Dap docs
 pub mod dap;
+pub mod driver;
 pub mod jtag;
 pub mod swd;
 pub mod swj;
