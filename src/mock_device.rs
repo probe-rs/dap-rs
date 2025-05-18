@@ -2,6 +2,8 @@ use crate::{jtag, swd, swj};
 
 #[mockall::automock]
 pub trait SwdJtagDevice {
+    fn timer_available(&self) -> bool;
+
     // swj
     fn high_impedance_mode(&mut self);
     fn process_swj_clock(&mut self, max_frequency: u32) -> bool;
@@ -25,6 +27,10 @@ pub trait SwdJtagDevice {
 }
 
 impl swj::Dependencies<Self, Self> for MockSwdJtagDevice {
+    fn timer_available(&self) -> bool {
+        SwdJtagDevice::timer_available(self)
+    }
+
     fn high_impedance_mode(&mut self) {
         SwdJtagDevice::high_impedance_mode(self)
     }
@@ -51,7 +57,9 @@ impl swj::Dependencies<Self, Self> for MockSwdJtagDevice {
 }
 
 impl swd::Swd<Self> for MockSwdJtagDevice {
-    const AVAILABLE: bool = true;
+    fn available(_: &Self) -> bool {
+        true
+    }
 
     fn set_clock(&mut self, max_frequency: u32) -> bool {
         SwdJtagDevice::set_clock(self, max_frequency)
@@ -79,7 +87,9 @@ impl swd::Swd<Self> for MockSwdJtagDevice {
 }
 
 impl jtag::Jtag<MockSwdJtagDevice> for MockSwdJtagDevice {
-    const AVAILABLE: bool = true;
+    fn available(_: &Self) -> bool {
+        true
+    }
 
     fn set_clock(&mut self, max_frequency: u32) -> bool {
         SwdJtagDevice::set_clock(self, max_frequency)
