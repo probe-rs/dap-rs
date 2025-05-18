@@ -9,13 +9,16 @@ pub trait SwdJtagDevice {
     fn process_swj_sequence(&mut self, data: &[u8], nbits: usize);
 
     // swd
+    fn swd_config(&mut self) -> &mut swd::Config;
     fn read_inner(&mut self, apndp: swd::APnDP, a: swd::DPRegister) -> swd::Result<u32>;
     fn write_inner(&mut self, apndp: swd::APnDP, a: swd::DPRegister, data: u32) -> swd::Result<()>;
     fn read_sequence(&mut self, num_bits: usize, data: &mut [u8]) -> swd::Result<()>;
     fn write_sequence(&mut self, num_bits: usize, data: &[u8]) -> swd::Result<()>;
 
     // jtag
-    fn sequences(&mut self, data: &[u8], rxbuf: &mut [u8]) -> u32;
+    fn jtag_config(&mut self) -> &mut jtag::Config;
+    fn sequence(&mut self, info: jtag::SequenceInfo, tdi: &[u8], resp: &mut [u8]);
+    fn tms_sequence(&mut self, tms: &[bool]);
 
     // swd/jtag
     fn set_clock(&mut self, max_frequency: u32) -> bool;
@@ -36,6 +39,14 @@ impl swj::Dependencies<Self, Self> for MockSwdJtagDevice {
 
     fn process_swj_sequence(&mut self, data: &[u8], nbits: usize) {
         SwdJtagDevice::process_swj_sequence(self, data, nbits)
+    }
+
+    fn jtag_config(&mut self) -> &mut jtag::Config {
+        SwdJtagDevice::jtag_config(self)
+    }
+
+    fn swd_config(&mut self) -> &mut swd::Config {
+        SwdJtagDevice::swd_config(self)
     }
 }
 
@@ -61,6 +72,10 @@ impl swd::Swd<Self> for MockSwdJtagDevice {
     fn write_sequence(&mut self, num_bits: usize, data: &[u8]) -> swd::Result<()> {
         SwdJtagDevice::write_sequence(self, num_bits, data)
     }
+
+    fn config(&mut self) -> &mut swd::Config {
+        Self::swd_config(self)
+    }
 }
 
 impl jtag::Jtag<MockSwdJtagDevice> for MockSwdJtagDevice {
@@ -70,7 +85,15 @@ impl jtag::Jtag<MockSwdJtagDevice> for MockSwdJtagDevice {
         SwdJtagDevice::set_clock(self, max_frequency)
     }
 
-    fn sequences(&mut self, data: &[u8], rxbuf: &mut [u8]) -> u32 {
-        SwdJtagDevice::sequences(self, data, rxbuf)
+    fn sequence(&mut self, info: jtag::SequenceInfo, tdi: &[u8], resp: &mut [u8]) {
+        SwdJtagDevice::sequence(self, info, tdi, resp)
+    }
+
+    fn config(&mut self) -> &mut jtag::Config {
+        SwdJtagDevice::jtag_config(self)
+    }
+
+    fn tms_sequence(&mut self, tms: &[bool]) {
+        SwdJtagDevice::tms_sequence(self, tms)
     }
 }
