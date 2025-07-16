@@ -763,7 +763,7 @@ where
                     // If we didn't read the correct value, set the value mismatch
                     // flag in the response and quit early.
                     if (read_value & transfer_config.match_mask) != target_value {
-                        resp.write_u8_at(1, resp.read_u8_at(1) | (1 << 4));
+                        resp.write_u8_at(2, resp.read_u8_at(2) | (1 << 4));
                         break;
                     }
                 } else {
