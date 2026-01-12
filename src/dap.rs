@@ -1294,8 +1294,11 @@ mod test {
 
     #[test]
     fn test_swd_output_reset() {
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+        
         let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
+            mock,
             FakeLEDs {},
             StdDelayUs {},
             NoSwo,
@@ -1322,8 +1325,11 @@ mod test {
 
     #[test]
     fn test_swd_output_max_size() {
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+        
         let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
+            mock,
             FakeLEDs {},
             StdDelayUs {},
             NoSwo,
@@ -1353,8 +1359,11 @@ mod test {
 
     #[test]
     fn test_swd_input() {
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+        
         let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
+            mock,
             FakeLEDs {},
             StdDelayUs {},
             NoSwo,
@@ -1387,8 +1396,11 @@ mod test {
 
     #[test]
     fn test_swd_input_max_size() {
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+        
         let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
+            mock,
             FakeLEDs {},
             StdDelayUs {},
             NoSwo,
@@ -1422,8 +1434,11 @@ mod test {
 
     #[test]
     fn test_target_select() {
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+        
         let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
+            mock,
             FakeLEDs {},
             StdDelayUs {},
             NoSwo,
