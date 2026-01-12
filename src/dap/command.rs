@@ -1,13 +1,6 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Copy, Clone)]
-pub enum DapVersion {
-    V1,
-    V2,
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Copy, Clone, TryFromPrimitive, PartialEq)]
 #[allow(non_camel_case_types)]
 #[repr(u8)]
