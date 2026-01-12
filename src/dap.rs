@@ -149,7 +149,7 @@ where
 
         let resp = &mut ResponseWriter::new(req.command, rbuf);
 
-        trace!("Dap command: {}", req.command);
+        trace!("Dap command: {:?}", req.command);
 
         match req.command {
             Command::DAP_Info => self.process_info(req, resp),
@@ -265,7 +265,7 @@ where
         };
 
         info!(
-            "DAP connect: {}, SWD: {}, JTAG: {}",
+            "DAP connect: {:?}, SWD: {}, JTAG: {}",
             port,
             self.capabilities.contains(Capabilities::SWD),
             self.capabilities.contains(Capabilities::JTAG),
@@ -1256,7 +1256,7 @@ fn transfer_with_retry<DEPS>(
         // Read register until retry counter expires or the read returns !Wait
         response_value = jtag.transfer(info.r_nw, info.a2a3 as u8, transfer_config, data);
         if response_value != jtag::TransferResult::Wait || retry == 0 {
-            debug!("Transfer result: {:x}", response_value);
+            debug!("Transfer result: {:?}", response_value);
             break;
         }
         retry -= 1;
@@ -1296,15 +1296,8 @@ mod test {
     fn test_swd_output_reset() {
         let mut mock = MockSwdJtagDevice::new();
         mock.expect_timer_available().return_const(false);
-        
-        let mut dap = TestDap::new(
-            mock,
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-            512,
-        );
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 52, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0];
         let mut rbuf = [0u8; 64];
@@ -1327,15 +1320,8 @@ mod test {
     fn test_swd_output_max_size() {
         let mut mock = MockSwdJtagDevice::new();
         mock.expect_timer_available().return_const(false);
-        
-        let mut dap = TestDap::new(
-            mock,
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-            512,
-        );
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00];
         let mut rbuf = [0u8; 64];
@@ -1361,15 +1347,8 @@ mod test {
     fn test_swd_input() {
         let mut mock = MockSwdJtagDevice::new();
         mock.expect_timer_available().return_const(false);
-        
-        let mut dap = TestDap::new(
-            mock,
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-            512,
-        );
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 0x80 | 52];
         let mut rbuf = [0u8; 64];
@@ -1398,15 +1377,8 @@ mod test {
     fn test_swd_input_max_size() {
         let mut mock = MockSwdJtagDevice::new();
         mock.expect_timer_available().return_const(false);
-        
-        let mut dap = TestDap::new(
-            mock,
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-            512,
-        );
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 0x80];
         let mut rbuf = [0u8; 64];
@@ -1436,15 +1408,8 @@ mod test {
     fn test_target_select() {
         let mut mock = MockSwdJtagDevice::new();
         mock.expect_timer_available().return_const(false);
-        
-        let mut dap = TestDap::new(
-            mock,
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-            512,
-        );
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         // write 8 bits, read 5 bits, write 33 bits
         let report = [
