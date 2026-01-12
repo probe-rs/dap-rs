@@ -1,14 +1,7 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Copy, Clone)]
-pub enum DapVersion {
-    V1,
-    V2,
-}
-
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Copy, Clone, TryFromPrimitive, PartialEq)]
+#[derive(Copy, Clone, TryFromPrimitive, PartialEq, Debug)]
 #[allow(non_camel_case_types)]
 #[repr(u8)]
 pub enum Command {
@@ -59,7 +52,7 @@ pub enum Command {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Copy, Clone, IntoPrimitive)]
+#[derive(Copy, Clone, IntoPrimitive, Debug)]
 #[repr(u8)]
 pub enum ResponseStatus {
     DapOk = 0x00,
@@ -67,7 +60,7 @@ pub enum ResponseStatus {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Copy, Clone, TryFromPrimitive)]
+#[derive(Copy, Clone, TryFromPrimitive, Debug)]
 #[allow(non_camel_case_types)]
 #[repr(u8)]
 pub enum DapInfoID {
@@ -85,7 +78,7 @@ pub enum DapInfoID {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Copy, Clone, TryFromPrimitive)]
+#[derive(Copy, Clone, TryFromPrimitive, Debug)]
 #[repr(u8)]
 pub enum HostStatusType {
     Connect = 0,
@@ -93,13 +86,14 @@ pub enum HostStatusType {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub enum HostStatus {
     Connected(bool),
     Running(bool),
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Copy, Clone, TryFromPrimitive)]
+#[derive(Copy, Clone, TryFromPrimitive, Debug)]
 #[repr(u8)]
 pub enum ConnectPort {
     Default = 0,
@@ -108,6 +102,7 @@ pub enum ConnectPort {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 #[repr(u8)]
 pub enum ConnectPortResponse {
     Failed = 0,
@@ -116,6 +111,7 @@ pub enum ConnectPortResponse {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub enum DapMode {
     SWD,
     JTAG,

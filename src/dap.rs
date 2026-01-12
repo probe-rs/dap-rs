@@ -1,7 +1,7 @@
 use crate::{
     jtag::{self, TransferInfo, TransferResult},
     swd::{self, APnDP, RnW},
-    swj, swo, usb,
+    swj, swo,
 };
 
 mod command;
@@ -56,6 +56,7 @@ pub struct Dap<'a, DEPS, LEDS, WAIT, JTAG, SWD, SWO> {
     version_string: &'a str,
     transfer_config: TransferConfig,
     capabilities: Capabilities,
+    max_packet_size: u16,
     // mode: Option<DapMode>,
     leds: LEDS,
     wait: WAIT,
@@ -71,12 +72,19 @@ where
     SWO: swo::Swo,
 {
     /// Create a Dap handler
+    ///
+    /// `max_packet_size` specifies the maximum packet size the USB host may send us. You must
+    /// ensure the USB buffers you use for communication are at least this big.
+    ///
+    /// Higher values lead to better performance due to lower communication overhead.
+    /// Typical values are 64 bytes for CMSIS-DAP v1 and 512 or 1024 bytes for CMSIS-DAP v2.
     pub fn new(
         dependencies: DEPS,
         leds: LEDS,
         wait: WAIT,
         swo: SWO,
         version_string: &'a str,
+        max_packet_size: u16,
     ) -> Self {
         assert!(SWD::available(&dependencies) || JTAG::available(&dependencies));
 
@@ -122,6 +130,7 @@ where
                 match_retries: 8,
                 match_mask: 0,
             },
+            max_packet_size,
             // mode: None,
             leds,
             wait,
@@ -132,12 +141,7 @@ where
     /// Process a new CMSIS-DAP command from `report`.
     ///
     /// Returns number of bytes written to response buffer.
-    pub fn process_command(
-        &mut self,
-        report: &[u8],
-        rbuf: &mut [u8],
-        version: DapVersion,
-    ) -> usize {
+    pub fn process_command(&mut self, report: &[u8], rbuf: &mut [u8]) -> usize {
         let req = match Request::from_report(report) {
             Some(req) => req,
             None => return 0,
@@ -145,10 +149,10 @@ where
 
         let resp = &mut ResponseWriter::new(req.command, rbuf);
 
-        trace!("Dap command: {}", req.command);
+        trace!("Dap command: {:?}", req.command);
 
         match req.command {
-            Command::DAP_Info => self.process_info(req, resp, version),
+            Command::DAP_Info => self.process_info(req, resp),
             Command::DAP_HostStatus => self.process_host_status(req, resp),
             Command::DAP_Connect => self.process_connect(req, resp),
             Command::DAP_Disconnect => self.process_disconnect(req, resp),
@@ -197,7 +201,7 @@ where
         }
     }
 
-    fn process_info(&self, mut req: Request, resp: &mut ResponseWriter, version: DapVersion) {
+    fn process_info(&self, mut req: Request, resp: &mut ResponseWriter) {
         match DapInfoID::try_from(req.next_u8()) {
             // Return 0-length string for VendorID, ProductID, SerialNumber
             // to indicate they should be read from USB descriptor instead
@@ -228,16 +232,7 @@ where
             }
             Ok(DapInfoID::MaxPacketSize) => {
                 resp.write_u8(2);
-                match version {
-                    DapVersion::V1 => {
-                        // Maximum of 64 bytes per packet
-                        resp.write_u16(usb::DAP1_PACKET_SIZE);
-                    }
-                    DapVersion::V2 => {
-                        // Maximum of 512 bytes per packet
-                        resp.write_u16(usb::DAP2_PACKET_SIZE);
-                    }
-                }
+                resp.write_u16(self.max_packet_size);
             }
             _ => resp.write_u8(0),
         }
@@ -270,7 +265,7 @@ where
         };
 
         info!(
-            "DAP connect: {}, SWD: {}, JTAG: {}",
+            "DAP connect: {:?}, SWD: {}, JTAG: {}",
             port,
             self.capabilities.contains(Capabilities::SWD),
             self.capabilities.contains(Capabilities::JTAG),
@@ -1261,7 +1256,7 @@ fn transfer_with_retry<DEPS>(
         // Read register until retry counter expires or the read returns !Wait
         response_value = jtag.transfer(info.r_nw, info.a2a3 as u8, transfer_config, data);
         if response_value != jtag::TransferResult::Wait || retry == 0 {
-            debug!("Transfer result: {:x}", response_value);
+            debug!("Transfer result: {:?}", response_value);
             break;
         }
         retry -= 1;
@@ -1299,13 +1294,10 @@ mod test {
 
     #[test]
     fn test_swd_output_reset() {
-        let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-        );
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 52, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0];
         let mut rbuf = [0u8; 64];
@@ -1319,20 +1311,17 @@ mod test {
             }
             _ => assert!(false, "can't switch to swd"),
         }
-        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        let rsize = dap.process_command(&report, &mut rbuf);
         assert_eq!(rsize, 2);
         assert_eq!(&rbuf[..2], &[0x1Du8, 0x00])
     }
 
     #[test]
     fn test_swd_output_max_size() {
-        let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-        );
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00];
         let mut rbuf = [0u8; 64];
@@ -1349,20 +1338,17 @@ mod test {
             }
             _ => assert!(false, "can't switch to swd"),
         }
-        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        let rsize = dap.process_command(&report, &mut rbuf);
         assert_eq!(rsize, 2);
         assert_eq!(&rbuf[..2], &[0x1Du8, 0x00])
     }
 
     #[test]
     fn test_swd_input() {
-        let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-        );
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 0x80 | 52];
         let mut rbuf = [0u8; 64];
@@ -1379,7 +1365,7 @@ mod test {
             }
             _ => assert!(false, "can't switch to swd"),
         }
-        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        let rsize = dap.process_command(&report, &mut rbuf);
         assert_eq!(rsize, 9);
         assert_eq!(
             &rbuf[..9],
@@ -1389,13 +1375,10 @@ mod test {
 
     #[test]
     fn test_swd_input_max_size() {
-        let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-        );
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         let report = [0x1Du8, 1, 0x80];
         let mut rbuf = [0u8; 64];
@@ -1413,7 +1396,7 @@ mod test {
             }
             _ => assert!(false, "can't switch to swd"),
         }
-        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        let rsize = dap.process_command(&report, &mut rbuf);
         assert_eq!(rsize, 10);
         assert_eq!(
             &rbuf[..10],
@@ -1423,13 +1406,10 @@ mod test {
 
     #[test]
     fn test_target_select() {
-        let mut dap = TestDap::new(
-            MockSwdJtagDevice::new(),
-            FakeLEDs {},
-            StdDelayUs {},
-            NoSwo,
-            "test_dap",
-        );
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
 
         // write 8 bits, read 5 bits, write 33 bits
         let report = [
@@ -1467,7 +1447,7 @@ mod test {
             }
             _ => assert!(false, "can't switch to swd"),
         }
-        let rsize = dap.process_command(&report, &mut rbuf, DapVersion::V2);
+        let rsize = dap.process_command(&report, &mut rbuf);
         assert_eq!(rsize, 3);
         assert_eq!(&rbuf[..3], &[0x1Du8, 0x00, 0x1F])
     }
