@@ -111,8 +111,8 @@ impl Default for Config {
 
 /// Definition of SWD communication.
 pub trait Swd<DEPS>: From<DEPS> {
-    /// If SWD is available or not.
-    const AVAILABLE: bool;
+    /// Returns whether SWD is available or not.
+    fn available(deps: &DEPS) -> bool;
 
     /// Returns a mutable reference to the SWD interface configuration.
     fn config(&mut self) -> &mut Config;
