@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run tests
+      run: cargo test
+    - name: Build with no features
+      run: cargo build --no-default-features
+    - name: Build with feature defmt
+      run: cargo build --no-default-features --features defmt
+    - name: Build with feature log
+      run: cargo build --no-default-features --features log
+    - name: Build with feature usb-hs
+      run: cargo build --no-default-features --features usb-hs
+    - name: Build with all features (defmt + usb-hs)
+      run: cargo build --no-default-features --features defmt,usb-hs
