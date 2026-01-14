@@ -104,12 +104,14 @@ where
         self.tdo.set_as_input();
     }
 
+    #[inline(always)]
     fn req(&mut self, port: APnDP, dir: Dir, addr: DPRegister) {
         let req = (port as u32) | (dir as u32) << 1 | (addr as u32) << 2;
         let parity = req.count_ones() % 2;
         self.shift_out(0b10000001 | req << 1 | parity << 5, 8);
     }
 
+    #[inline(always)]
     pub fn read(&mut self, port: APnDP, addr: DPRegister) -> swd::Result<u32> {
         self.req(port, Dir::Read, addr);
 
@@ -141,6 +143,7 @@ where
         Ok(data)
     }
 
+    #[inline(always)]
     pub fn write(&mut self, port: APnDP, addr: DPRegister, data: u32) -> swd::Result<()> {
         self.req(port, Dir::Write, addr);
 
@@ -158,6 +161,7 @@ where
         Ok(())
     }
 
+    #[inline(always)]
     fn shift_out(&mut self, val: u32, num_bits: usize) {
         self.tms_swdio.set_as_output();
         for i in 0..num_bits {
@@ -169,6 +173,7 @@ where
         }
     }
 
+    #[inline(always)]
     fn shift_in(&mut self, num_bits: usize) -> u32 {
         self.tms_swdio.set_as_input();
         let mut val = 0;
@@ -182,6 +187,7 @@ where
         val
     }
 
+    #[inline(always)]
     fn shift_jtag(&mut self, tms: bool, tdi: u32, num_bits: usize) -> u32 {
         self.tms_swdio.set_as_output();
         self.tms_swdio.set_high(tms);
@@ -197,6 +203,7 @@ where
         tdo
     }
 
+    #[inline(always)]
     fn wait(&mut self) {
         self.delay.delay_cycles(self.bit_cycles);
     }
