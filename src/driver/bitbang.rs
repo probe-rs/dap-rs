@@ -9,6 +9,38 @@ use crate::{
     swj::{Dependencies, Pins},
 };
 
+/// Clock cycle with data output
+macro_rules! clock_out {
+    ($self:expr, $bit:expr) => {
+        $self.tms_swdio.set_high($bit);
+        $self.tck_swclk.set_high(false);
+        $self.wait();
+        $self.tck_swclk.set_high(true);
+        $self.wait();
+    };
+}
+
+/// Clock cycle with data input
+macro_rules! clock_in {
+    ($self:expr, $var:ident, $bit:expr) => {
+        $self.tck_swclk.set_high(false);
+        $self.wait();
+        $var |= ($self.tms_swdio.is_high() as u32) << $bit;
+        $self.tck_swclk.set_high(true);
+        $self.wait();
+    };
+}
+
+/// Clock cycle without data capture (for turnaround)
+macro_rules! clock_only {
+    ($self:expr) => {
+        $self.tck_swclk.set_high(false);
+        $self.wait();
+        $self.tck_swclk.set_high(true);
+        $self.wait();
+    };
+}
+
 /// A trait for a pin that can be used as an input or output.
 pub trait InputOutputPin {
     fn set_as_output(&mut self);
@@ -108,55 +140,162 @@ where
     fn req(&mut self, port: APnDP, dir: Dir, addr: DPRegister) {
         let req = (port as u32) | (dir as u32) << 1 | (addr as u32) << 2;
         let parity = req.count_ones() % 2;
-        self.shift_out(0b10000001 | req << 1 | parity << 5, 8);
+        let val = 0b10000001 | req << 1 | parity << 5;
+
+        // shift_out 8 bits
+        // Note: pin may be in input mode after a previous read(), caller must ensure output mode
+        clock_out!(self, val & (1 << 0) != 0);
+        clock_out!(self, val & (1 << 1) != 0);
+        clock_out!(self, val & (1 << 2) != 0);
+        clock_out!(self, val & (1 << 3) != 0);
+        clock_out!(self, val & (1 << 4) != 0);
+        clock_out!(self, val & (1 << 5) != 0);
+        clock_out!(self, val & (1 << 6) != 0);
+        clock_out!(self, val & (1 << 7) != 0);
     }
 
     #[inline(always)]
     pub fn read(&mut self, port: APnDP, addr: DPRegister) -> swd::Result<u32> {
+        self.tms_swdio.set_as_output();
         self.req(port, Dir::Read, addr);
 
-        let ack = self.shift_in(4); // turnaround + ack
-        match (ack >> 1) & 0b111 {
+        // turnaround cycle (don't read)
+        self.tms_swdio.set_as_input();
+        clock_only!(self);
+
+        // read 3 ack bits
+        let mut ack = 0;
+        clock_in!(self, ack, 0);
+        clock_in!(self, ack, 1);
+        clock_in!(self, ack, 2);
+
+        match ack {
             0b001 => {} // ok
             0b010 => {
-                self.shift_in(1); // turnaround
+                clock_only!(self); // turnaround cycle
                 return Err(swd::Error::AckWait);
             }
             0b100 => {
-                self.shift_in(1); // turnaround
+                clock_only!(self); // turnaround cycle
                 return Err(swd::Error::AckFault);
             }
             _ => {
-                self.shift_in(1); // turnaround
+                clock_only!(self); // turnaround cycle
                 return Err(swd::Error::AckUnknown(ack as u8));
             }
         }
 
-        let data = self.shift_in(32);
-        let parity = self.shift_in(1);
+        // shift_in 32 bits - data
+        let mut data = 0;
+        clock_in!(self, data, 0);
+        clock_in!(self, data, 1);
+        clock_in!(self, data, 2);
+        clock_in!(self, data, 3);
+        clock_in!(self, data, 4);
+        clock_in!(self, data, 5);
+        clock_in!(self, data, 6);
+        clock_in!(self, data, 7);
+        clock_in!(self, data, 8);
+        clock_in!(self, data, 9);
+        clock_in!(self, data, 10);
+        clock_in!(self, data, 11);
+        clock_in!(self, data, 12);
+        clock_in!(self, data, 13);
+        clock_in!(self, data, 14);
+        clock_in!(self, data, 15);
+        clock_in!(self, data, 16);
+        clock_in!(self, data, 17);
+        clock_in!(self, data, 18);
+        clock_in!(self, data, 19);
+        clock_in!(self, data, 20);
+        clock_in!(self, data, 21);
+        clock_in!(self, data, 22);
+        clock_in!(self, data, 23);
+        clock_in!(self, data, 24);
+        clock_in!(self, data, 25);
+        clock_in!(self, data, 26);
+        clock_in!(self, data, 27);
+        clock_in!(self, data, 28);
+        clock_in!(self, data, 29);
+        clock_in!(self, data, 30);
+        clock_in!(self, data, 31);
+
+        // shift_in 1 bit - parity
+        let mut parity = 0;
+        clock_in!(self, parity, 0);
+
         if parity != data.count_ones() % 2 {
             return Err(swd::Error::BadParity);
         }
 
-        self.shift_in(1); // turnaround
+        // turnaround cycle (clock only, keeps pin in input mode)
+        clock_only!(self);
 
         Ok(data)
     }
 
     #[inline(always)]
     pub fn write(&mut self, port: APnDP, addr: DPRegister, data: u32) -> swd::Result<()> {
+        self.tms_swdio.set_as_output();
         self.req(port, Dir::Write, addr);
 
-        let ack = self.shift_in(5); // turnaround + ack + turnaround
-        match (ack >> 1) & 0b111 {
+        // turnaround cycle (don't read)
+        self.tms_swdio.set_as_input();
+        clock_only!(self);
+
+        // read 3 ack bits
+        let mut ack = 0;
+        clock_in!(self, ack, 0);
+        clock_in!(self, ack, 1);
+        clock_in!(self, ack, 2);
+
+        // turnaround cycle (don't read)
+        clock_only!(self);
+
+        match ack {
             0b001 => {} // ok
             0b010 => return Err(swd::Error::AckWait),
             0b100 => return Err(swd::Error::AckFault),
             _ => return Err(swd::Error::AckUnknown(ack as _)),
         }
 
-        self.shift_out(data, 32);
-        self.shift_out(data.count_ones() % 2, 1);
+        // shift_out 32 bits - data
+        self.tms_swdio.set_as_output();
+        clock_out!(self, data & (1 << 0) != 0);
+        clock_out!(self, data & (1 << 1) != 0);
+        clock_out!(self, data & (1 << 2) != 0);
+        clock_out!(self, data & (1 << 3) != 0);
+        clock_out!(self, data & (1 << 4) != 0);
+        clock_out!(self, data & (1 << 5) != 0);
+        clock_out!(self, data & (1 << 6) != 0);
+        clock_out!(self, data & (1 << 7) != 0);
+        clock_out!(self, data & (1 << 8) != 0);
+        clock_out!(self, data & (1 << 9) != 0);
+        clock_out!(self, data & (1 << 10) != 0);
+        clock_out!(self, data & (1 << 11) != 0);
+        clock_out!(self, data & (1 << 12) != 0);
+        clock_out!(self, data & (1 << 13) != 0);
+        clock_out!(self, data & (1 << 14) != 0);
+        clock_out!(self, data & (1 << 15) != 0);
+        clock_out!(self, data & (1 << 16) != 0);
+        clock_out!(self, data & (1 << 17) != 0);
+        clock_out!(self, data & (1 << 18) != 0);
+        clock_out!(self, data & (1 << 19) != 0);
+        clock_out!(self, data & (1 << 20) != 0);
+        clock_out!(self, data & (1 << 21) != 0);
+        clock_out!(self, data & (1 << 22) != 0);
+        clock_out!(self, data & (1 << 23) != 0);
+        clock_out!(self, data & (1 << 24) != 0);
+        clock_out!(self, data & (1 << 25) != 0);
+        clock_out!(self, data & (1 << 26) != 0);
+        clock_out!(self, data & (1 << 27) != 0);
+        clock_out!(self, data & (1 << 28) != 0);
+        clock_out!(self, data & (1 << 29) != 0);
+        clock_out!(self, data & (1 << 30) != 0);
+        clock_out!(self, data & (1 << 31) != 0);
+
+        // shift_out 1 bit - parity
+        clock_out!(self, data.count_ones() % 2 != 0);
 
         Ok(())
     }
@@ -165,11 +304,7 @@ where
     fn shift_out(&mut self, val: u32, num_bits: usize) {
         self.tms_swdio.set_as_output();
         for i in 0..num_bits {
-            self.tms_swdio.set_high(val & (1 << i) != 0);
-            self.tck_swclk.set_high(false);
-            self.wait();
-            self.tck_swclk.set_high(true);
-            self.wait();
+            clock_out!(self, val & (1 << i) != 0);
         }
     }
 
@@ -178,11 +313,7 @@ where
         self.tms_swdio.set_as_input();
         let mut val = 0;
         for i in 0..num_bits {
-            self.tck_swclk.set_high(false);
-            self.wait();
-            val |= (self.tms_swdio.is_high() as u32) << i;
-            self.tck_swclk.set_high(true);
-            self.wait();
+            clock_in!(self, val, i);
         }
         val
     }
