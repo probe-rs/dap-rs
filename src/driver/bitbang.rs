@@ -179,6 +179,10 @@ where
                 clock_only!(self); // turnaround cycle
                 return Err(swd::Error::AckFault);
             }
+            0b111 => {
+                clock_only!(self); // turnaround cycle
+                return Err(swd::Error::NoAck);
+            }
             _ => {
                 clock_only!(self); // turnaround cycle
                 return Err(swd::Error::AckUnknown(ack as u8));

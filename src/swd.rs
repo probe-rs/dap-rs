@@ -10,6 +10,8 @@ pub enum Error {
     AckWait,
     /// A fault.
     AckFault,
+    /// Not acknowledged.
+    NoAck,
     /// A protocol error.
     AckProtocol,
     /// Unkown error.
@@ -62,7 +64,7 @@ pub enum Ack {
     Ok = 0b001,
     Wait = 0b010,
     Fault = 0b100,
-    Protocol = 0b111,
+    NoAck = 0b111,
 }
 
 impl Ack {
@@ -72,7 +74,7 @@ impl Ack {
             v if v == (Ack::Ok as u8) => Ok(()),
             v if v == (Ack::Wait as u8) => Err(Error::AckWait),
             v if v == (Ack::Fault as u8) => Err(Error::AckFault),
-            v if v == (Ack::Protocol as u8) => Err(Error::AckProtocol),
+            v if v == (Ack::NoAck as u8) => Err(Error::NoAck),
             _ => Err(Error::AckUnknown(ack)),
         }
     }

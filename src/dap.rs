@@ -1229,6 +1229,10 @@ impl<T> CheckResult<T> for swd::Result<T> {
                 *resp = 4;
                 None
             }
+            Err(swd::Error::NoAck) => {
+                *resp = 7;
+                None
+            }
             Err(_) => {
                 *resp = (1 << 3) | 7;
                 None
