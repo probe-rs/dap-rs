@@ -691,6 +691,7 @@ where
 
         let wait_retries = transfer_config.wait_retries;
         let match_retries = transfer_config.match_retries;
+        let mut check_write = false;
 
         for transfer_idx in 0..ntransfers {
             // Store how many transfers we execute in the response
@@ -707,6 +708,7 @@ where
             let timestamp = (transfer_req & (1 << 7)) != 0;
 
             if rnw == swd::RnW::R {
+                check_write = false;
                 // Issue register read
                 let mut read_value = if apndp == swd::APnDP::AP {
                     // Reads from AP are posted, so we issue the
@@ -787,14 +789,23 @@ where
                     .check(resp.mut_at(2))
                     .is_none()
                 {
+                    check_write = false;
                     break;
                 }
+
+                check_write = true;
 
                 if timestamp {
                     // Store Timestamp
                     resp.write_u32(swd.timestamp());
                 }
             }
+        }
+
+        if check_write {
+            let _ = swd
+                .read_dp(wait_retries, swd::DPRegister::RDBUFF)
+                .check(resp.mut_at(2));
         }
     }
 
@@ -1088,6 +1099,12 @@ where
                 let result = swd.write(wait_retries, apndp, a, write_value);
                 if result.check(resp.mut_at(3)).is_none() {
                     break;
+                }
+                if transfer_idx == ntransfers - 1 {
+                    let rdbuff = swd::DPRegister::RDBUFF.into();
+                    if swd.read_dp(wait_retries, rdbuff).check(resp.mut_at(3)).is_none() {
+                        break;
+                    }
                 }
             }
         }
@@ -1454,5 +1471,89 @@ mod test {
         let rsize = dap.process_command(&report, &mut rbuf);
         assert_eq!(rsize, 3);
         assert_eq!(&rbuf[..3], &[0x1Du8, 0x00, 0x1F])
+    }
+
+    #[test]
+    fn test_swd_transfer_checks_last_write() {
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
+        dap.state.to_swd();
+
+        // DAP_Transfer (0x05): index 0, 1 transfer, AP write to reg 0 (DRW = 0x0C -> bits [3:2] = 3, AP = 1, W = 0 -> 0x0D)
+        let report = [0x05u8, 0, 1, 0x0D, 0xEF, 0xBE, 0xAD, 0xDE];
+        let mut rbuf = [0u8; 64];
+
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_write_inner()
+                    .once()
+                    .with(
+                        eq(swd::APnDP::AP),
+                        eq(swd::DPRegister::RDBUFF),
+                        eq(0xDEADBEEFu32),
+                    )
+                    .return_const(Ok(()));
+                // RDBUFF read after the final write reports Fault
+                swd.expect_read_inner()
+                    .once()
+                    .with(eq(swd::APnDP::DP), eq(swd::DPRegister::RDBUFF))
+                    .return_const(Err(swd::Error::AckFault));
+            }
+            _ => unreachable!(),
+        }
+
+        let rsize = dap.process_command(&report, &mut rbuf);
+        assert_eq!(rsize, 3);
+        // Command = 0x05, Transfer Count = 1, Transfer Response = 0x04 (FAULT)
+        assert_eq!(&rbuf[..3], &[0x05u8, 1, 0x04]);
+    }
+
+    #[test]
+    fn test_swd_transfer_block_checks_last_write() {
+        let mut mock = MockSwdJtagDevice::new();
+        mock.expect_timer_available().return_const(false);
+
+        let mut dap = TestDap::new(mock, FakeLEDs {}, StdDelayUs {}, NoSwo, "test_dap", 512);
+        dap.state.to_swd();
+
+        // DAP_TransferBlock (0x06): index 0, count = 2 (0x02, 0x00), request = 0x0D (AP Write), 2 words
+        let report = [
+            0x06u8, 0, 0x02, 0x00, 0x0D, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        ];
+        let mut rbuf = [0u8; 64];
+
+        match &mut dap.state {
+            State::Swd(swd) => {
+                swd.expect_write_inner()
+                    .once()
+                    .with(
+                        eq(swd::APnDP::AP),
+                        eq(swd::DPRegister::RDBUFF),
+                        eq(0x44332211u32),
+                    )
+                    .return_const(Ok(()));
+                swd.expect_write_inner()
+                    .once()
+                    .with(
+                        eq(swd::APnDP::AP),
+                        eq(swd::DPRegister::RDBUFF),
+                        eq(0x88776655u32),
+                    )
+                    .return_const(Ok(()));
+                // RDBUFF read after the final write reports Fault
+                swd.expect_read_inner()
+                    .once()
+                    .with(eq(swd::APnDP::DP), eq(swd::DPRegister::RDBUFF))
+                    .return_const(Err(swd::Error::AckFault));
+            }
+            _ => unreachable!(),
+        }
+
+        let rsize = dap.process_command(&report, &mut rbuf);
+        assert_eq!(rsize, 4);
+        // Command = 0x06, Transfer Count = 2 (0x02, 0x00), Transfer Response = 0x04 (FAULT)
+        assert_eq!(&rbuf[..4], &[0x06u8, 0x02, 0x00, 0x04]);
     }
 }
